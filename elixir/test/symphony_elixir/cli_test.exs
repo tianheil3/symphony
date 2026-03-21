@@ -13,6 +13,10 @@ defmodule SymphonyElixir.CLITest do
         send(parent, :file_checked)
         true
       end,
+      run_bootstrap: fn _path ->
+        send(parent, :bootstrap_run)
+        :ok
+      end,
       set_workflow_file_path: fn _path ->
         send(parent, :workflow_set)
         :ok
@@ -41,11 +45,13 @@ defmodule SymphonyElixir.CLITest do
     refute_received :logs_root_set
     refute_received :port_set
     refute_received :started
+    refute_received :bootstrap_run
   end
 
   test "defaults to WORKFLOW.md when workflow path is missing" do
     deps = %{
       file_regular?: fn path -> Path.basename(path) == "WORKFLOW.md" end,
+      run_bootstrap: fn _path -> :ok end,
       set_workflow_file_path: fn _path -> :ok end,
       set_logs_root: fn _path -> :ok end,
       set_server_port_override: fn _port -> :ok end,
@@ -65,6 +71,7 @@ defmodule SymphonyElixir.CLITest do
         send(parent, {:workflow_checked, path})
         path == expanded_path
       end,
+      run_bootstrap: fn _path -> :ok end,
       set_workflow_file_path: fn path ->
         send(parent, {:workflow_set, path})
         :ok
@@ -84,6 +91,7 @@ defmodule SymphonyElixir.CLITest do
 
     deps = %{
       file_regular?: fn _path -> true end,
+      run_bootstrap: fn _path -> :ok end,
       set_workflow_file_path: fn _path -> :ok end,
       set_logs_root: fn path ->
         send(parent, {:logs_root, path})
@@ -101,6 +109,7 @@ defmodule SymphonyElixir.CLITest do
   test "returns not found when workflow file does not exist" do
     deps = %{
       file_regular?: fn _path -> false end,
+      run_bootstrap: fn _path -> :ok end,
       set_workflow_file_path: fn _path -> :ok end,
       set_logs_root: fn _path -> :ok end,
       set_server_port_override: fn _port -> :ok end,
@@ -114,6 +123,7 @@ defmodule SymphonyElixir.CLITest do
   test "returns startup error when app cannot start" do
     deps = %{
       file_regular?: fn _path -> true end,
+      run_bootstrap: fn _path -> :ok end,
       set_workflow_file_path: fn _path -> :ok end,
       set_logs_root: fn _path -> :ok end,
       set_server_port_override: fn _port -> :ok end,
@@ -128,6 +138,7 @@ defmodule SymphonyElixir.CLITest do
   test "returns ok when workflow exists and app starts" do
     deps = %{
       file_regular?: fn _path -> true end,
+      run_bootstrap: fn _path -> :ok end,
       set_workflow_file_path: fn _path -> :ok end,
       set_logs_root: fn _path -> :ok end,
       set_server_port_override: fn _port -> :ok end,
@@ -135,5 +146,46 @@ defmodule SymphonyElixir.CLITest do
     }
 
     assert :ok = CLI.evaluate([@ack_flag, "WORKFLOW.md"], deps)
+  end
+
+  test "bootstrap command uses the current directory when no path is provided" do
+    parent = self()
+    expected_path = Path.expand(".")
+
+    deps = %{
+      file_regular?: fn _path -> flunk("run path should not be used for bootstrap") end,
+      run_bootstrap: fn path ->
+        send(parent, {:bootstrap_path, path})
+        :ok
+      end,
+      set_workflow_file_path: fn _path -> flunk("workflow should not be set for bootstrap") end,
+      set_logs_root: fn _path -> flunk("logs root should not be set for bootstrap") end,
+      set_server_port_override: fn _port -> flunk("port should not be set for bootstrap") end,
+      ensure_all_started: fn -> flunk("application startup should not run for bootstrap") end
+    }
+
+    assert :ok = CLI.evaluate(["bootstrap"], deps)
+    assert_received {:bootstrap_path, ^expected_path}
+  end
+
+  test "init alias forwards the explicit target root to bootstrap" do
+    parent = self()
+    target_root = "tmp/target-repo"
+    expected_path = Path.expand(target_root)
+
+    deps = %{
+      file_regular?: fn _path -> flunk("run path should not be used for init") end,
+      run_bootstrap: fn path ->
+        send(parent, {:bootstrap_path, path})
+        :ok
+      end,
+      set_workflow_file_path: fn _path -> flunk("workflow should not be set for init") end,
+      set_logs_root: fn _path -> flunk("logs root should not be set for init") end,
+      set_server_port_override: fn _port -> flunk("port should not be set for init") end,
+      ensure_all_started: fn -> flunk("application startup should not run for init") end
+    }
+
+    assert :ok = CLI.evaluate(["init", target_root], deps)
+    assert_received {:bootstrap_path, ^expected_path}
   end
 end

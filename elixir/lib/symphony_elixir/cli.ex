@@ -11,6 +11,7 @@ defmodule SymphonyElixir.CLI do
   @type ensure_started_result :: {:ok, [atom()]} | {:error, term()}
   @type deps :: %{
           file_regular?: (String.t() -> boolean()),
+          run_bootstrap: (String.t() -> :ok | {:error, String.t()}),
           set_workflow_file_path: (String.t() -> :ok | {:error, term()}),
           set_logs_root: (String.t() -> :ok | {:error, term()}),
           set_server_port_override: (non_neg_integer() | nil -> :ok | {:error, term()}),
@@ -21,7 +22,11 @@ defmodule SymphonyElixir.CLI do
   def main(args) do
     case evaluate(args) do
       :ok ->
-        wait_for_shutdown()
+        if bootstrap_command?(args) do
+          System.halt(0)
+        else
+          wait_for_shutdown()
+        end
 
       {:error, message} ->
         IO.puts(:stderr, message)
@@ -31,23 +36,29 @@ defmodule SymphonyElixir.CLI do
 
   @spec evaluate([String.t()], deps()) :: :ok | {:error, String.t()}
   def evaluate(args, deps \\ runtime_deps()) do
-    case OptionParser.parse(args, strict: @switches) do
-      {opts, [], []} ->
-        with :ok <- require_guardrails_acknowledgement(opts),
-             :ok <- maybe_set_logs_root(opts, deps),
-             :ok <- maybe_set_server_port(opts, deps) do
-          run(Path.expand("WORKFLOW.md"), deps)
-        end
-
-      {opts, [workflow_path], []} ->
-        with :ok <- require_guardrails_acknowledgement(opts),
-             :ok <- maybe_set_logs_root(opts, deps),
-             :ok <- maybe_set_server_port(opts, deps) do
-          run(workflow_path, deps)
-        end
+    case args do
+      [command | rest] when command in ["bootstrap", "init"] ->
+        evaluate_bootstrap(rest, deps)
 
       _ ->
-        {:error, usage_message()}
+        case OptionParser.parse(args, strict: @switches) do
+          {opts, [], []} ->
+            with :ok <- require_guardrails_acknowledgement(opts),
+                 :ok <- maybe_set_logs_root(opts, deps),
+                 :ok <- maybe_set_server_port(opts, deps) do
+              run(Path.expand("WORKFLOW.md"), deps)
+            end
+
+          {opts, [workflow_path], []} ->
+            with :ok <- require_guardrails_acknowledgement(opts),
+                 :ok <- maybe_set_logs_root(opts, deps),
+                 :ok <- maybe_set_server_port(opts, deps) do
+              run(workflow_path, deps)
+            end
+
+          _ ->
+            {:error, usage_message()}
+        end
     end
   end
 
@@ -72,19 +83,30 @@ defmodule SymphonyElixir.CLI do
 
   @spec usage_message() :: String.t()
   defp usage_message do
-    "Usage: symphony [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
+    [
+      "Usage:",
+      "  symphony [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]",
+      "  symphony bootstrap [target-repo-root]",
+      "  symphony init [target-repo-root]"
+    ]
+    |> Enum.join("\n")
   end
 
   @spec runtime_deps() :: deps()
   defp runtime_deps do
     %{
       file_regular?: &File.regular?/1,
+      run_bootstrap: &SymphonyElixir.Bootstrap.run/1,
       set_workflow_file_path: &SymphonyElixir.Workflow.set_workflow_file_path/1,
       set_logs_root: &set_logs_root/1,
       set_server_port_override: &set_server_port_override/1,
       ensure_all_started: fn -> Application.ensure_all_started(:symphony_elixir) end
     }
   end
+
+  defp evaluate_bootstrap([], deps), do: deps.run_bootstrap.(Path.expand("."))
+  defp evaluate_bootstrap([target_root], deps), do: deps.run_bootstrap.(Path.expand(target_root))
+  defp evaluate_bootstrap(_args, _deps), do: {:error, usage_message()}
 
   defp maybe_set_logs_root(opts, deps) do
     case Keyword.get_values(opts, :logs_root) do
@@ -167,6 +189,13 @@ defmodule SymphonyElixir.CLI do
   defp set_server_port_override(port) when is_integer(port) and port >= 0 do
     Application.put_env(:symphony_elixir, :server_port_override, port)
     :ok
+  end
+
+  defp bootstrap_command?(args) when is_list(args) do
+    case args do
+      [command | _rest] -> command in ["bootstrap", "init"]
+      _ -> false
+    end
   end
 
   @spec wait_for_shutdown() :: no_return()
