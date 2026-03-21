@@ -56,6 +56,7 @@ defmodule SymphonyElixir.Bootstrap do
   }
 
   @type deps :: %{
+          command_available?: (String.t() -> boolean()),
           cwd: (-> String.t()),
           detect_git_remote: (String.t() -> String.t() | nil),
           dir?: (String.t() -> boolean()),
@@ -141,6 +142,7 @@ defmodule SymphonyElixir.Bootstrap do
   def runtime_deps do
     %{
       cwd: &File.cwd!/0,
+      command_available?: &(not is_nil(System.find_executable(&1))),
       detect_git_remote: &detect_git_remote/1,
       dir?: &File.dir?/1,
       exists?: &File.exists?/1,
@@ -429,6 +431,7 @@ defmodule SymphonyElixir.Bootstrap do
     deps.say.("Workspace root: #{plan.workspace_root}")
     deps.say.("Tracker provider: #{tracker_provider_module(plan).display_name()}")
     deps.say.("Forge provider: #{plan.forge_provider.display_name}")
+    deps.say.("Forge support level: #{forge_support_level(plan.forge_provider)}")
     deps.say.("Active states: #{Enum.join(plan.active_states, ", ")}")
     deps.say.("Terminal states: #{Enum.join(plan.terminal_states, ", ")}")
     deps.say.("Hosted review workflow: #{yes_no(plan.hosted_review_flow?)}")
@@ -494,7 +497,8 @@ defmodule SymphonyElixir.Bootstrap do
 
     with :ok <- verify_artifact_paths(artifact_paths, deps),
          :ok <- verify_workflow_file(plan),
-         :ok <- verify_gstack_installation(plan, deps) do
+         :ok <- verify_gstack_installation(plan, deps),
+         :ok <- verify_hosted_review_tooling(plan, deps) do
       :ok
     end
   end
@@ -542,6 +546,31 @@ defmodule SymphonyElixir.Bootstrap do
       missing_paths -> {:error, "Bootstrap verification failed for gstack install; missing paths: #{Enum.join(missing_paths, ", ")}"}
     end
   end
+
+  defp verify_hosted_review_tooling(%{hosted_review_flow?: false}, _deps), do: :ok
+
+  defp verify_hosted_review_tooling(%{forge_provider: %{key: "github"}} = plan, deps) do
+    cond do
+      not deps.command_available?.("gh") ->
+        {:error, "Bootstrap verification failed for GitHub golden path; `gh` is not available in PATH."}
+
+      plan.create_pr_template? and not deps.exists?.(Path.join(plan.target_root, ".github/pull_request_template.md")) ->
+        {:error, "Bootstrap verification failed for GitHub golden path; PR template is missing."}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp verify_hosted_review_tooling(%{forge_provider: %{key: "gitlab"}}, deps) do
+    if deps.command_available?.("glab") do
+      :ok
+    else
+      {:error, "Bootstrap verification failed for GitLab review flow; `glab` is not available in PATH."}
+    end
+  end
+
+  defp verify_hosted_review_tooling(_plan, _deps), do: :ok
 
   defp maybe_install_gstack(%{vendor_gstack?: false}, _deps), do: :ok
 
@@ -918,6 +947,10 @@ defmodule SymphonyElixir.Bootstrap do
   defp common_skill_name?(skill_name) when is_binary(skill_name) do
     skill_name in @always_installed_skills
   end
+
+  defp forge_support_level(%{key: "github"}), do: "recommended"
+  defp forge_support_level(%{key: "gitlab"}), do: "preview"
+  defp forge_support_level(_provider), do: "basic"
 
   defp gstack_defaults_line(%{vendor_gstack?: true, gstack_target_root: gstack_target_root}) do
     "- gstack vendored at `#{gstack_target_root}` and should be used at the appropriate lifecycle stage."

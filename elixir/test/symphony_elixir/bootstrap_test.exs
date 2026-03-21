@@ -57,6 +57,7 @@ defmodule SymphonyElixir.BootstrapTest do
     assert workflow =~ "\"Merging\""
     assert workflow =~ "Validation command before handoff: make test"
     assert workflow =~ "Forge provider: GitHub"
+    assert workflow =~ "Hosted review automation: enabled"
     assert workflow =~ "gstack vendored at"
     assert workflow =~ "Use gstack skills at the appropriate stage"
     assert workflow =~ "Keep CI green."
@@ -169,6 +170,39 @@ defmodule SymphonyElixir.BootstrapTest do
     refute File.exists?(Path.join(target_root, ".github/pull_request_template.md"))
   end
 
+  test "bootstrap verify fails for GitHub golden path when gh is unavailable" do
+    target_root = temp_repo_root!("bootstrap-github-missing-gh")
+
+    deps =
+      deps_with_responses(
+        [
+          "\n",
+          "\n",
+          "demo-project\n",
+          "\n",
+          "\n",
+          "\n",
+          "make test\n",
+          "n\n",
+          "\n",
+          "\n",
+          "\n",
+          "\n",
+          "Keep CI green.\n",
+          ".\n",
+          ".\n",
+          ".\n",
+          "y\n"
+        ],
+        git_remote: "git@github.com:example/demo.git",
+        gstack_root: nil,
+        command_available?: fn command -> command in ["git"] end
+      )
+
+    assert {:error, message} = Bootstrap.run(target_root, deps)
+    assert message =~ "`gh` is not available in PATH"
+  end
+
   defp deps_with_responses(responses, opts) when is_list(responses) and is_list(opts) do
     {:ok, agent} = Agent.start_link(fn -> responses end)
 
@@ -188,9 +222,14 @@ defmodule SymphonyElixir.BootstrapTest do
 
         :ok
       end)
+    command_available? =
+      Keyword.get(opts, :command_available?, fn command ->
+        command in ["git", "gh", "glab"]
+      end)
     run_gstack_setup = Keyword.get(opts, :run_gstack_setup, fn _vendored_root -> :ok end)
 
     %{
+      command_available?: command_available?,
       cwd: &File.cwd!/0,
       detect_git_remote: fn _target_root -> git_remote end,
       dir?: &File.dir?/1,
