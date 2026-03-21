@@ -86,6 +86,14 @@ defmodule SymphonyElixir.CoreTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "123")
     assert {:error, {:unsupported_tracker_kind, "123"}} = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "gitlab",
+      tracker_api_token: "token",
+      tracker_project_slug: nil
+    )
+
+    assert {:error, :missing_gitlab_project_slug} = Config.validate!()
   end
 
   test "current WORKFLOW.md file is valid and complete" do
@@ -147,6 +155,26 @@ defmodule SymphonyElixir.CoreTest do
     )
 
     assert Config.settings!().tracker.assignee == env_assignee
+  end
+
+  test "gitlab api token resolves from GITLAB_API_TOKEN env var" do
+    previous_gitlab_api_key = System.get_env("GITLAB_API_TOKEN")
+    env_api_key = "test-gitlab-api-key"
+
+    on_exit(fn -> restore_env("GITLAB_API_TOKEN", previous_gitlab_api_key) end)
+    System.put_env("GITLAB_API_TOKEN", env_api_key)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "gitlab",
+      tracker_api_token: nil,
+      tracker_endpoint: nil,
+      tracker_project_slug: "group/project",
+      codex_command: "/bin/sh app-server"
+    )
+
+    assert Config.settings!().tracker.api_key == env_api_key
+    assert Config.settings!().tracker.endpoint == "https://gitlab.com/api/graphql"
+    assert :ok = Config.validate!()
   end
 
   test "workflow file path defaults to WORKFLOW.md in the current working directory when app env is unset" do
@@ -883,7 +911,7 @@ defmodule SymphonyElixir.CoreTest do
 
     prompt = PromptBuilder.build_prompt(issue)
 
-    assert prompt =~ "You are working on a Linear issue."
+    assert prompt =~ "You are working on an issue."
     assert prompt =~ "Identifier: MT-777"
     assert prompt =~ "Title: Make fallback prompt useful"
     assert prompt =~ "Body:"

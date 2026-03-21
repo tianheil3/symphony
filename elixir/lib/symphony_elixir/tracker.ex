@@ -3,7 +3,7 @@ defmodule SymphonyElixir.Tracker do
   Adapter boundary for issue tracker reads and writes.
   """
 
-  alias SymphonyElixir.Config
+  alias SymphonyElixir.{Config, TrackerProviders}
 
   @callback fetch_candidate_issues() :: {:ok, [term()]} | {:error, term()}
   @callback fetch_issues_by_states([String.t()]) :: {:ok, [term()]} | {:error, term()}
@@ -38,9 +38,8 @@ defmodule SymphonyElixir.Tracker do
 
   @spec adapter() :: module()
   def adapter do
-    case Config.settings!().tracker.kind do
-      "memory" -> SymphonyElixir.Tracker.Memory
-      _ -> SymphonyElixir.Linear.Adapter
-    end
+    Config.settings!().tracker.kind
+    |> TrackerProviders.provider_module!()
+    |> apply(:adapter_module, [])
   end
 end

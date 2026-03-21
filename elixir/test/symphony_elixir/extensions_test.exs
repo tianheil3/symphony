@@ -4,6 +4,7 @@ defmodule SymphonyElixir.ExtensionsTest do
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
+  alias SymphonyElixir.GitLab.Adapter, as: GitLabAdapter
   alias SymphonyElixir.Linear.Adapter
   alias SymphonyElixir.Tracker.Memory
 
@@ -79,12 +80,19 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   setup do
     linear_client_module = Application.get_env(:symphony_elixir, :linear_client_module)
+    gitlab_client_module = Application.get_env(:symphony_elixir, :gitlab_client_module)
 
     on_exit(fn ->
       if is_nil(linear_client_module) do
         Application.delete_env(:symphony_elixir, :linear_client_module)
       else
         Application.put_env(:symphony_elixir, :linear_client_module, linear_client_module)
+      end
+
+      if is_nil(gitlab_client_module) do
+        Application.delete_env(:symphony_elixir, :gitlab_client_module)
+      else
+        Application.put_env(:symphony_elixir, :gitlab_client_module, gitlab_client_module)
       end
     end)
 
@@ -203,6 +211,52 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "linear")
     assert SymphonyElixir.Tracker.adapter() == Adapter
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "gitlab",
+      tracker_api_token: "token",
+      tracker_project_slug: "group/project"
+    )
+
+    Application.put_env(:symphony_elixir, :gitlab_client_module, FakeGitLabClient)
+    assert SymphonyElixir.Tracker.adapter() == GitLabAdapter
+    assert {:ok, [:gitlab_candidate]} = SymphonyElixir.Tracker.fetch_candidate_issues()
+    assert_receive :gitlab_fetch_candidate_issues_called
+    assert {:ok, ["Todo"]} = SymphonyElixir.Tracker.fetch_issues_by_states(["Todo"])
+    assert_receive {:gitlab_fetch_issues_by_states_called, ["Todo"]}
+    assert {:ok, ["group/project#1"]} = SymphonyElixir.Tracker.fetch_issue_states_by_ids(["group/project#1"])
+    assert_receive {:gitlab_fetch_issue_states_by_ids_called, ["group/project#1"]}
+    assert :ok = SymphonyElixir.Tracker.create_comment("group/project#1", "hello")
+    assert_receive {:gitlab_create_comment_called, "group/project#1", "hello"}
+    assert :ok = SymphonyElixir.Tracker.update_issue_state("group/project#1", "Done")
+    assert_receive {:gitlab_update_issue_state_called, "group/project#1", "Done"}
+  end
+
+  defmodule FakeGitLabClient do
+    def fetch_candidate_issues do
+      send(self(), :gitlab_fetch_candidate_issues_called)
+      {:ok, [:gitlab_candidate]}
+    end
+
+    def fetch_issues_by_states(states) do
+      send(self(), {:gitlab_fetch_issues_by_states_called, states})
+      {:ok, states}
+    end
+
+    def fetch_issue_states_by_ids(issue_ids) do
+      send(self(), {:gitlab_fetch_issue_states_by_ids_called, issue_ids})
+      {:ok, issue_ids}
+    end
+
+    def create_comment(issue_id, body) do
+      send(self(), {:gitlab_create_comment_called, issue_id, body})
+      :ok
+    end
+
+    def update_issue_state(issue_id, state_name) do
+      send(self(), {:gitlab_update_issue_state_called, issue_id, state_name})
+      :ok
+    end
   end
 
   test "linear adapter delegates reads and validates mutation responses" do

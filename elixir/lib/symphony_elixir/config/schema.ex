@@ -6,6 +6,7 @@ defmodule SymphonyElixir.Config.Schema do
   import Ecto.Changeset
 
   alias SymphonyElixir.PathSafety
+  alias SymphonyElixir.TrackerProviders
 
   @primary_key false
 
@@ -46,7 +47,7 @@ defmodule SymphonyElixir.Config.Schema do
 
     embedded_schema do
       field(:kind, :string)
-      field(:endpoint, :string, default: "https://api.linear.app/graphql")
+      field(:endpoint, :string)
       field(:api_key, :string)
       field(:project_slug, :string)
       field(:assignee, :string)
@@ -366,10 +367,13 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   defp finalize_settings(settings) do
+    tracker_provider = tracker_provider_for_kind(settings.tracker.kind)
+
     tracker = %{
       settings.tracker
-      | api_key: resolve_secret_setting(settings.tracker.api_key, System.get_env("LINEAR_API_KEY")),
-        assignee: resolve_secret_setting(settings.tracker.assignee, System.get_env("LINEAR_ASSIGNEE"))
+      | endpoint: resolve_tracker_endpoint(settings.tracker.endpoint, tracker_provider),
+        api_key: resolve_secret_setting(settings.tracker.api_key, tracker_env_value(tracker_provider, :api_key_env_var)),
+        assignee: resolve_secret_setting(settings.tracker.assignee, tracker_env_value(tracker_provider, :assignee_env_var))
     }
 
     workspace = %{
@@ -385,6 +389,37 @@ defmodule SymphonyElixir.Config.Schema do
 
     %{settings | tracker: tracker, workspace: workspace, codex: codex}
   end
+
+  defp tracker_provider_for_kind(kind) do
+    case TrackerProviders.provider(kind) do
+      {:ok, provider} -> provider
+      {:error, _reason} -> nil
+    end
+  end
+
+  defp resolve_tracker_endpoint(endpoint, provider) when is_binary(endpoint) do
+    case String.trim(endpoint) do
+      "" -> provider_default_endpoint(provider)
+      normalized -> normalized
+    end
+  end
+
+  defp resolve_tracker_endpoint(_endpoint, provider), do: provider_default_endpoint(provider)
+
+  defp provider_default_endpoint(provider) when is_atom(provider) do
+    provider.default_endpoint()
+  end
+
+  defp provider_default_endpoint(_provider), do: nil
+
+  defp tracker_env_value(provider, callback) when is_atom(provider) and is_atom(callback) do
+    case apply(provider, callback, []) do
+      env_name when is_binary(env_name) -> System.get_env(env_name)
+      _ -> nil
+    end
+  end
+
+  defp tracker_env_value(_provider, _callback), do: nil
 
   defp normalize_keys(value) when is_map(value) do
     Enum.reduce(value, %{}, fn {key, raw_value}, normalized ->

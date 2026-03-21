@@ -13,17 +13,54 @@ defmodule SymphonyElixir.Bootstrap do
   @default_gstack_repo_url "https://github.com/garrytan/gstack.git"
   @default_gstack_ref "main"
   @default_terminal_states ["Closed", "Cancelled", "Canceled", "Duplicate", @default_done_state]
-  @always_installed_skills ["commit", "pull", "linear"]
-  @github_skills ["push", "land"]
+  @always_installed_skills ["commit", "pull"]
+  @tracker_providers %{
+    "linear" => %{
+      key: "linear",
+      module: SymphonyElixir.Bootstrap.TrackerProviders.Linear
+    },
+    "gitlab" => %{
+      key: "gitlab",
+      module: SymphonyElixir.Bootstrap.TrackerProviders.GitLab
+    }
+  }
+  @forge_providers %{
+    "github" => %{
+      key: "github",
+      display_name: "GitHub",
+      module: SymphonyElixir.Bootstrap.ForgeProviders.GitHub,
+      supports_automated_pr_flow?: true,
+      automated_skill_names: ["push", "land"]
+    },
+    "gitlab" => %{
+      key: "gitlab",
+      display_name: "GitLab",
+      module: SymphonyElixir.Bootstrap.ForgeProviders.GitLab,
+      supports_automated_pr_flow?: true,
+      automated_skill_names: ["push", "land"]
+    },
+    "gitea" => %{
+      key: "gitea",
+      display_name: "Gitea",
+      module: SymphonyElixir.Bootstrap.ForgeProviders.Generic,
+      supports_automated_pr_flow?: false,
+      automated_skill_names: []
+    },
+    "none" => %{
+      key: "none",
+      display_name: "No forge detected",
+      module: SymphonyElixir.Bootstrap.ForgeProviders.Generic,
+      supports_automated_pr_flow?: false,
+      automated_skill_names: []
+    }
+  }
 
   @type deps :: %{
-          copy_dir!: (String.t(), String.t() -> term()),
           cwd: (-> String.t()),
           detect_git_remote: (String.t() -> String.t() | nil),
           dir?: (String.t() -> boolean()),
           exists?: (String.t() -> boolean()),
           install_gstack_from_github: (String.t(), String.t(), String.t() -> :ok | {:error, String.t()}),
-          locate_gstack_root: (-> String.t() | nil),
           mkdir_p!: (String.t() -> term()),
           prompt: (String.t() -> String.t() | nil),
           remove_path!: (String.t() -> term()),
@@ -32,9 +69,24 @@ defmodule SymphonyElixir.Bootstrap do
           write_file!: (String.t(), iodata() -> term())
         }
 
+  @type inspection :: %{
+          target_root: String.t(),
+          repo_name_default: String.t(),
+          remote_url: String.t() | nil,
+          tracker_provider_default_key: String.t(),
+          tracker_provider: map(),
+          forge_provider: map(),
+          workspace_root_default: String.t(),
+          after_create_default: String.t(),
+          gstack_repo_url_default: String.t()
+        }
+
   @type plan :: %{
           target_root: String.t(),
           repo_name: String.t(),
+          remote_url: String.t() | nil,
+          tracker_provider: map(),
+          forge_provider: map(),
           project_slug: String.t(),
           workspace_root: String.t(),
           after_create_command: String.t(),
@@ -46,7 +98,7 @@ defmodule SymphonyElixir.Bootstrap do
           gstack_target_root: String.t(),
           run_gstack_setup?: boolean(),
           error_doc_path: String.t(),
-          github_flow?: boolean(),
+          hosted_review_flow?: boolean(),
           human_review_polling?: boolean(),
           create_agents?: boolean(),
           create_pr_template?: boolean(),
@@ -70,9 +122,11 @@ defmodule SymphonyElixir.Bootstrap do
       |> Path.expand()
 
     with :ok <- ensure_target_root(expanded_root, deps),
-         {:ok, plan} <- build_plan(expanded_root, deps),
+         {:ok, inspection} <- inspect_target(expanded_root, deps),
+         {:ok, plan} <- build_plan(inspection, deps),
          :ok <- confirm_plan(plan, deps),
-         :ok <- install_plan(plan, deps) do
+         :ok <- install_plan(plan, deps),
+         :ok <- verify_installation(plan, deps) do
       deps.say.("")
       deps.say.("Symphony bootstrap complete.")
       deps.say.("Installed files under #{expanded_root}")
@@ -86,13 +140,11 @@ defmodule SymphonyElixir.Bootstrap do
   @spec runtime_deps() :: deps()
   def runtime_deps do
     %{
-      copy_dir!: &File.cp_r!/2,
       cwd: &File.cwd!/0,
       detect_git_remote: &detect_git_remote/1,
       dir?: &File.dir?/1,
       exists?: &File.exists?/1,
       install_gstack_from_github: &install_gstack_from_github/3,
-      locate_gstack_root: &locate_gstack_root/0,
       mkdir_p!: &File.mkdir_p!/1,
       prompt: &IO.gets/1,
       remove_path!: &File.rm_rf!/1,
@@ -114,14 +166,34 @@ defmodule SymphonyElixir.Bootstrap do
     end
   end
 
-  defp build_plan(target_root, deps) do
+  defp inspect_target(target_root, deps) do
     repo_name_default = Path.basename(target_root)
     remote_url = deps.detect_git_remote.(target_root)
-    default_workspace_root = default_workspace_root(repo_name_default)
-    default_after_create = default_after_create_command(remote_url)
 
-    with {:ok, repo_name} <- ask_text("Repository name", repo_name_default, deps, required: true),
-         {:ok, project_slug} <- ask_text("Linear project slug", nil, deps, required: true),
+    {:ok,
+     %{
+       target_root: target_root,
+       repo_name_default: repo_name_default,
+       remote_url: remote_url,
+       tracker_provider_default_key: default_tracker_provider_key(remote_url),
+       tracker_provider: tracker_provider(default_tracker_provider_key(remote_url)),
+       forge_provider: detect_forge_provider(remote_url),
+       workspace_root_default: default_workspace_root(repo_name_default),
+       after_create_default: default_after_create_command(remote_url),
+       gstack_repo_url_default: @default_gstack_repo_url
+     }}
+  end
+
+  defp build_plan(%{} = inspection, deps) do
+    repo_name_default = inspection.repo_name_default
+    remote_url = inspection.remote_url
+    default_workspace_root = inspection.workspace_root_default
+    default_after_create = inspection.after_create_default
+    forge_provider = inspection.forge_provider
+
+    with {:ok, tracker_provider} <- ask_tracker_provider(inspection, deps),
+         {:ok, repo_name} <- ask_text("Repository name", repo_name_default, deps, required: true),
+         {:ok, project_slug} <- ask_text(tracker_provider_module(%{tracker_provider: tracker_provider}).project_slug_prompt(), nil, deps, required: true),
          {:ok, workspace_root} <- ask_text("Workspace root", default_workspace_root, deps, required: true),
          {:ok, after_create_command} <-
            ask_text("Workspace bootstrap command", default_after_create, deps, required: true),
@@ -130,30 +202,32 @@ defmodule SymphonyElixir.Bootstrap do
            ask_text("Validation command before handoff", nil, deps, required: false),
          {:ok, vendor_gstack?} <-
            ask_yes_no("Install the full `gstack` skill pack from GitHub into this repo?", true, deps),
-         {:ok, gstack_source_root} <- maybe_ask_gstack_source(vendor_gstack?, @default_gstack_repo_url, deps),
+         {:ok, gstack_source_root} <- maybe_ask_gstack_source(vendor_gstack?, inspection.gstack_repo_url_default, deps),
          {:ok, gstack_ref} <- maybe_ask_gstack_ref(vendor_gstack?, deps),
          {:ok, run_gstack_setup?} <- maybe_ask_gstack_setup(vendor_gstack?, deps),
-         {:ok, github_flow?} <-
-           ask_yes_no("Install GitHub PR workflow skills (`push` / `land`)?", true, deps),
+         {:ok, hosted_review_flow?} <- ask_hosted_flow(forge_provider, deps),
          {:ok, human_review_polling?} <-
            ask_yes_no("Keep agents active in `Human Review` so they can poll for new comments?", false, deps),
          {:ok, create_agents?} <- ask_yes_no("Create or overwrite `AGENTS.md`?", true, deps),
          {:ok, create_pr_template?} <-
-           maybe_ask_pr_template(github_flow?, deps),
+           maybe_ask_pr_template(hosted_review_flow?, forge_provider, deps),
          {:ok, project_requirements} <- ask_multiline("Project requirements", deps),
          {:ok, acceptance_criteria} <- ask_multiline("Default acceptance criteria", deps),
          {:ok, additional_instructions} <- ask_multiline("Additional autonomous instructions", deps) do
       human_review_state = @default_human_review_state
       rework_state = @default_rework_state
-      merging_state = if(github_flow?, do: @default_merging_state, else: nil)
+      merging_state = if(hosted_review_flow?, do: @default_merging_state, else: nil)
       done_state = @default_done_state
-      active_states = build_active_states(github_flow?, human_review_polling?, human_review_state, rework_state, merging_state)
-      skills = build_skill_list(github_flow?)
+      active_states = build_active_states(hosted_review_flow?, human_review_polling?, human_review_state, rework_state, merging_state)
+      skills = build_skill_list(forge_provider, hosted_review_flow?)
 
       {:ok,
        %{
-         target_root: target_root,
+         target_root: inspection.target_root,
          repo_name: repo_name,
+         remote_url: remote_url,
+         tracker_provider: tracker_provider,
+         forge_provider: forge_provider,
          project_slug: project_slug,
          workspace_root: workspace_root,
          after_create_command: after_create_command,
@@ -162,10 +236,10 @@ defmodule SymphonyElixir.Bootstrap do
          vendor_gstack?: vendor_gstack?,
          gstack_source_root: gstack_source_root,
          gstack_ref: gstack_ref,
-         gstack_target_root: Path.join([target_root, ".codex", "skills", "gstack"]),
+         gstack_target_root: Path.join([inspection.target_root, ".codex", "skills", "gstack"]),
          run_gstack_setup?: run_gstack_setup?,
          error_doc_path: @default_error_doc_path,
-         github_flow?: github_flow?,
+         hosted_review_flow?: hosted_review_flow?,
          human_review_polling?: human_review_polling?,
          create_agents?: create_agents?,
          create_pr_template?: create_pr_template?,
@@ -185,6 +259,27 @@ defmodule SymphonyElixir.Bootstrap do
 
   defp maybe_ask_gstack_source(false, _gstack_root, _deps), do: {:ok, nil}
 
+  defp ask_tracker_provider(inspection, deps) do
+    default_key = inspection.tracker_provider_default_key
+
+    case ask_text("Tracker provider (`linear` or `gitlab`)", default_key, deps, required: true) do
+      {:ok, key} ->
+        normalized_key = String.downcase(String.trim(key))
+
+        case Map.get(@tracker_providers, normalized_key) do
+          %{} = provider ->
+            {:ok, provider}
+
+          nil ->
+            deps.say.("Unsupported tracker provider: #{key}")
+            ask_tracker_provider(inspection, deps)
+        end
+
+      other ->
+        other
+    end
+  end
+
   defp maybe_ask_gstack_source(true, gstack_root, deps) do
     ask_text("gstack GitHub repo URL", gstack_root, deps, required: true)
   end
@@ -201,7 +296,32 @@ defmodule SymphonyElixir.Bootstrap do
     ask_yes_no("Run `gstack/setup --host codex` after vendoring?", true, deps)
   end
 
+  defp ask_hosted_flow(%{module: module} = forge_provider, deps) do
+    case module.automation_prompt(forge_provider) do
+      prompt when is_binary(prompt) ->
+        ask_yes_no(prompt, true, deps)
+
+      _ ->
+        ask_hosted_flow_without_automation(forge_provider, deps)
+    end
+  end
+
+  defp ask_hosted_flow_without_automation(%{display_name: display_name}, deps) do
+    deps.say.("")
+    deps.say.("Detected forge provider: #{display_name}")
+    deps.say.("Automated hosted review flow is not scaffolded for this forge yet; continuing without hosted review automation.")
+    {:ok, false}
+  end
+
   defp maybe_ask_pr_template(false, _deps), do: {:ok, false}
+
+  defp maybe_ask_pr_template(true, %{module: module} = forge_provider, deps) do
+    if module.pr_template_supported?(forge_provider) do
+      ask_yes_no("Create or overwrite `.github/pull_request_template.md`?", true, deps)
+    else
+      {:ok, false}
+    end
+  end
 
   defp maybe_ask_pr_template(true, deps) do
     ask_yes_no("Create or overwrite `.github/pull_request_template.md`?", true, deps)
@@ -305,11 +425,13 @@ defmodule SymphonyElixir.Bootstrap do
     deps.say.("--------------")
     deps.say.("Target root: #{plan.target_root}")
     deps.say.("Repo name: #{plan.repo_name}")
-    deps.say.("Linear project slug: #{plan.project_slug}")
+    deps.say.("#{tracker_provider_module(plan).display_name()} project slug: #{plan.project_slug}")
     deps.say.("Workspace root: #{plan.workspace_root}")
+    deps.say.("Tracker provider: #{tracker_provider_module(plan).display_name()}")
+    deps.say.("Forge provider: #{plan.forge_provider.display_name}")
     deps.say.("Active states: #{Enum.join(plan.active_states, ", ")}")
     deps.say.("Terminal states: #{Enum.join(plan.terminal_states, ", ")}")
-    deps.say.("GitHub PR workflow: #{yes_no(plan.github_flow?)}")
+    deps.say.("Hosted review workflow: #{yes_no(plan.hosted_review_flow?)}")
     deps.say.("Human Review polling: #{yes_no(plan.human_review_polling?)}")
     deps.say.("Validation command: #{plan.validation_command || "(not configured)"}")
     deps.say.("Skills: #{Enum.join(plan.skills, ", ")}")
@@ -324,10 +446,10 @@ defmodule SymphonyElixir.Bootstrap do
 
     deps.say.("Error knowledge base: #{plan.error_doc_path}")
 
-    required_states = required_linear_states(plan)
+    required_states = required_tracker_states(plan)
 
     if required_states != [] do
-      deps.say.("Linear status expectations: #{Enum.join(required_states, ", ")}")
+      deps.say.("#{tracker_provider_module(plan).display_name()} status expectations: #{Enum.join(required_states, ", ")}")
     end
 
     deps.say.("")
@@ -365,6 +487,62 @@ defmodule SymphonyElixir.Bootstrap do
       {:error, "Failed to write bootstrap files: #{Exception.message(error)}"}
   end
 
+  defp verify_installation(plan, deps) do
+    artifact_paths =
+      planned_artifacts(plan)
+      |> Enum.map(& &1.path)
+
+    with :ok <- verify_artifact_paths(artifact_paths, deps),
+         :ok <- verify_workflow_file(plan),
+         :ok <- verify_gstack_installation(plan, deps) do
+      :ok
+    end
+  end
+
+  defp verify_artifact_paths(paths, deps) when is_list(paths) do
+    missing =
+      Enum.reject(paths, fn path ->
+        deps.exists?.(path)
+      end)
+
+    case missing do
+      [] -> :ok
+      missing_paths -> {:error, "Bootstrap verification failed; missing files: #{Enum.join(missing_paths, ", ")}"}
+    end
+  end
+
+  defp verify_workflow_file(plan) do
+    workflow_path = Path.join(plan.target_root, "WORKFLOW.md")
+
+    with {:ok, %{config: config}} <- SymphonyElixir.Workflow.load(workflow_path),
+         {:ok, _parsed} <- SymphonyElixir.Config.Schema.parse(config) do
+      :ok
+    else
+      {:error, reason} ->
+        {:error, "Bootstrap verification failed for #{workflow_path}: #{inspect(reason)}"}
+    end
+  end
+
+  defp verify_gstack_installation(%{vendor_gstack?: false}, _deps), do: :ok
+
+  defp verify_gstack_installation(plan, deps) do
+    required_paths = [
+      plan.gstack_target_root,
+      Path.join(plan.gstack_target_root, "README.md"),
+      Path.join(plan.gstack_target_root, "setup")
+    ]
+
+    missing =
+      Enum.reject(required_paths, fn path ->
+        deps.exists?.(path)
+      end)
+
+    case missing do
+      [] -> :ok
+      missing_paths -> {:error, "Bootstrap verification failed for gstack install; missing paths: #{Enum.join(missing_paths, ", ")}"}
+    end
+  end
+
   defp maybe_install_gstack(%{vendor_gstack?: false}, _deps), do: :ok
 
   defp maybe_install_gstack(plan, deps) do
@@ -389,6 +567,25 @@ defmodule SymphonyElixir.Bootstrap do
       content: troubleshooting_doc_content(plan)
     }
 
+    common_skill_artifacts =
+      plan.skills
+      |> Enum.filter(&common_skill_name?/1)
+      |> Enum.map(fn skill_name ->
+        %{
+          path: Path.join([plan.target_root, ".codex", "skills", skill_name, "SKILL.md"]),
+          content: skill_content(skill_name, plan)
+        }
+      end)
+
+    tracker_skill_artifacts = tracker_provider_module(plan).related_skill_artifacts(plan)
+
+    forge_skill_artifacts =
+      if plan.hosted_review_flow? do
+        forge_provider_module(plan).skill_artifacts(plan)
+      else
+        []
+      end
+
     base =
       [workflow, troubleshooting]
       |> maybe_append(plan.create_agents?, %{path: Path.join(plan.target_root, "AGENTS.md"), content: agents_content(plan)})
@@ -397,16 +594,7 @@ defmodule SymphonyElixir.Bootstrap do
         content: pull_request_template_content(plan)
       })
 
-    Enum.reduce(plan.skills, base, fn skill_name, acc ->
-      [
-        %{
-          path: Path.join([plan.target_root, ".codex", "skills", skill_name, "SKILL.md"]),
-          content: skill_content(skill_name, plan)
-        }
-        | acc
-      ]
-    end)
-    |> Enum.reverse()
+    (base ++ common_skill_artifacts ++ tracker_skill_artifacts ++ forge_skill_artifacts)
   end
 
   defp maybe_append(list, true, value), do: [value | list]
@@ -417,8 +605,8 @@ defmodule SymphonyElixir.Bootstrap do
       [
         "---",
         "tracker:",
-        "  kind: \"linear\"",
-        "  api_key: \"$LINEAR_API_KEY\"",
+        "  kind: #{yaml_value(tracker_provider_module(plan).workflow_kind())}",
+        "  api_key: #{yaml_value("$" <> tracker_provider_module(plan).required_secret_name())}",
         "  project_slug: #{yaml_value(plan.project_slug)}",
         "  active_states: #{yaml_value(plan.active_states)}",
         "  terminal_states: #{yaml_value(plan.terminal_states)}",
@@ -448,14 +636,14 @@ defmodule SymphonyElixir.Bootstrap do
 
   defp workflow_prompt(plan) do
     [
-      "You are working on a Linear ticket `{{ issue.identifier }}` in the `#{plan.repo_name}` repository.",
+      "You are working on a #{tracker_provider_module(plan).display_name()} ticket `{{ issue.identifier }}` in the `#{plan.repo_name}` repository.",
       "",
       "{% if attempt %}",
       "Continuation context:",
       "",
       "- This is retry attempt #{{ attempt }} because the ticket is still active.",
       "- Resume from the existing workspace and current `## Codex Workpad` comment.",
-      "- Re-read new Linear comments and PR feedback before making more changes.",
+      "- Re-read new #{String.downcase(tracker_provider_module(plan).display_name())} comments and review feedback before making more changes.",
       "{% endif %}",
       "",
       "Issue context:",
@@ -474,7 +662,8 @@ defmodule SymphonyElixir.Bootstrap do
       "",
       "Repository defaults:",
       "- Validation command before handoff: #{plan.validation_command || "No default validation command configured."}",
-      "- GitHub PR workflow: #{bool_label(plan.github_flow?)}",
+      "- Forge provider: #{plan.forge_provider.display_name}",
+      "- Hosted review automation: #{bool_label(plan.hosted_review_flow?)}",
       "- Human Review polling: #{human_review_mode_label(plan)}",
       "- Error knowledge base: `#{plan.error_doc_path}`",
       gstack_defaults_line(plan),
@@ -490,7 +679,7 @@ defmodule SymphonyElixir.Bootstrap do
       "",
       "Operating rules:",
       "1. This is an unattended orchestration session. Never ask a human to do follow-up work for you.",
-      "2. Use exactly one persistent Linear comment named `## Codex Workpad` as the working plan, acceptance checklist, validation log, and blocker brief.",
+      "2. Use exactly one persistent #{tracker_provider_module(plan).workpad_label()} named `## Codex Workpad` as the working plan, acceptance checklist, validation log, and blocker brief.",
       "3. Update the workpad before new work, after each meaningful milestone, and before every handoff.",
       "4. Reproduce or capture the baseline behavior before changing code.",
       "5. Every time you hit a meaningful error or discover a reusable fix, append it to `#{plan.error_doc_path}`.",
@@ -502,14 +691,11 @@ defmodule SymphonyElixir.Bootstrap do
     ]
     |> Kernel.++(gstack_skill_lines(plan))
     |> Kernel.++([
-      "- `linear`: use Linear GraphQL operations for workpad comments, status moves, and attachments.",
+      tracker_provider_module(plan).related_skill_line(plan),
       "- `commit`: create clear commits when needed.",
       "- `pull`: merge the latest `origin/main` before final handoff or when conflicts appear."
     ])
-    |> maybe_append_lines(plan.github_flow?, [
-      "- `push`: publish the current branch and create or update the PR.",
-      "- `land`: merge the PR safely when the ticket reaches `#{plan.merging_state}`."
-    ])
+    |> maybe_append_lines(plan.hosted_review_flow?, forge_provider_module(plan).related_skill_lines(plan))
     |> Kernel.++([
       "",
       "Skill routing:",
@@ -525,9 +711,7 @@ defmodule SymphonyElixir.Bootstrap do
       status_line_for_human_review(plan),
       "- `#{plan.rework_state}` -> re-read all new human feedback, update the workpad, implement changes, and revalidate."
     ])
-    |> maybe_append_lines(not is_nil(plan.merging_state), [
-      "- `#{plan.merging_state}` -> use the `land` skill to merge, then move the issue to `#{plan.done_state}`."
-    ])
+    |> maybe_append_lines(plan.hosted_review_flow?, forge_provider_module(plan).status_lines(plan))
     |> Kernel.++([
       "- `#{plan.done_state}` -> terminal state; stop.",
       "",
@@ -535,11 +719,12 @@ defmodule SymphonyElixir.Bootstrap do
       "1. Determine the current issue state and follow the matching branch above.",
       "2. Find or create the single `## Codex Workpad` comment and keep it current in place.",
       "3. Keep `Plan`, `Acceptance Criteria`, `Validation`, and `Notes` sections accurate as reality changes.",
-      "4. If the issue is `#{plan.rework_state}`, start by reading all new Linear comments and any PR feedback before editing code.",
+      "4. If the issue is `#{plan.rework_state}`, start by reading all new #{tracker_provider_module(plan).display_name()} comments and any review feedback before editing code.",
       gstack_workflow_line(4, plan),
-      execution_flow_line_for_validation(plan),
-      execution_flow_line_for_pr(plan),
-      execution_flow_line_for_merge(plan),
+      execution_flow_line_for_validation(plan)
+    ])
+    |> Kernel.++(provider_execution_flow_lines(plan))
+    |> Kernel.++([
       final_workflow_line(plan)
     ])
     |> Enum.reject(&is_nil/1)
@@ -554,7 +739,7 @@ defmodule SymphonyElixir.Bootstrap do
         "## Operating Defaults",
         "",
         gstack_agents_line(plan),
-        "- Treat the Linear issue and the `## Codex Workpad` comment as the source of truth during execution.",
+        "- Treat the #{tracker_provider_module(plan).display_name()} issue and the `## Codex Workpad` comment as the source of truth during execution.",
         "- Keep scope tight and document blockers in the workpad instead of asking for manual follow-up work.",
         "- Before handoff, run #{plan.validation_command || "the most relevant validation for the current scope"} and record the result.",
         "- Re-read new human feedback before making more changes after a handoff or review cycle.",
@@ -603,9 +788,6 @@ defmodule SymphonyElixir.Bootstrap do
 
   defp skill_content("commit", _plan), do: commit_skill()
   defp skill_content("pull", _plan), do: pull_skill()
-  defp skill_content("linear", _plan), do: linear_skill()
-  defp skill_content("push", plan), do: push_skill(plan)
-  defp skill_content("land", plan), do: land_skill(plan)
 
   defp commit_skill do
     """
@@ -658,130 +840,24 @@ defmodule SymphonyElixir.Bootstrap do
     """
   end
 
-  defp linear_skill do
-    """
-    ---
-    name: linear
-    description:
-      Use Symphony's `linear_graphql` client tool for raw Linear GraphQL operations such as comment editing and issue state changes.
-    ---
-
-    # Linear GraphQL
-
-    Use the `linear_graphql` dynamic tool exposed by Symphony app-server sessions.
-
-    Tool input:
-
-    ```json
-    {
-      "query": "query or mutation document",
-      "variables": {
-        "optional": "graphql variables object"
-      }
-    }
-    ```
-
-    ## Common operations
-
-    - Query an issue by `id` or identifier.
-    - Create or update the persistent `## Codex Workpad` comment with `commentCreate` / `commentUpdate`.
-    - Move an issue between workflow states with `issueUpdate`.
-    - Attach a PR URL to the issue when a GitHub PR exists.
-    """
+  defp build_skill_list(%{module: module}, true) do
+    automated_skill_names = module.automated_skill_names()
+    @always_installed_skills ++ automated_skill_names
   end
 
-  defp push_skill(plan) do
-    validation_step =
-      case plan.validation_command do
-        nil -> "2. Run the most relevant validation for the current scope before pushing."
-        command -> "2. Run `#{command}` before pushing."
-      end
+  defp build_skill_list(_forge_provider, false), do: @always_installed_skills
 
-    pr_body_step =
-      if plan.create_pr_template? do
-        "6. If `.github/pull_request_template.md` exists, fill it out completely when creating or updating the PR body."
-      else
-        "6. Write a concise PR body that covers context, summary, acceptance criteria, and test plan."
-      end
-
-    """
-    ---
-    name: push
-    description:
-      Push current branch changes to origin and create or update the corresponding pull request.
-    ---
-
-    # Push
-
-    ## Goals
-
-    - Push the current branch safely.
-    - Create a PR if none exists for the branch, otherwise update the existing PR.
-
-    ## Steps
-
-    1. Identify the current branch and confirm the working tree is ready to publish.
-    #{validation_step}
-    3. Push the branch to `origin`, using upstream tracking if needed.
-    4. If the push is rejected because the branch is stale, use the `pull` skill and push again.
-    5. Ensure a PR exists for the branch with a clear title that reflects the shipped outcome.
-    #{pr_body_step}
-    7. Reply with the PR URL after publish succeeds.
-    """
-  end
-
-  defp land_skill(plan) do
-    validation_step =
-      case plan.validation_command do
-        nil -> "2. Confirm the full local validation bar for the changed scope is green before merging."
-        command -> "2. Confirm `#{command}` is green before merging."
-      end
-
-    """
-    ---
-    name: land
-    description:
-      Land a pull request by checking mergeability, resolving conflicts, waiting for checks, and squash-merging when green.
-    ---
-
-    # Land
-
-    ## Goals
-
-    - Ensure the PR is conflict-free with `main`.
-    - Wait for required checks and review feedback.
-    - Squash-merge only when the branch is ready.
-
-    ## Steps
-
-    1. Locate the PR for the current branch with `gh pr view`.
-    #{validation_step}
-    3. If conflicts exist, use the `pull` skill, resolve them, and republish the branch.
-    4. Watch PR checks with `gh pr checks --watch`.
-    5. If checks fail, inspect the failure, fix it, validate again, and push updates.
-    6. When checks are green and review feedback is addressed, squash-merge the PR with `gh pr merge --squash`.
-    """
-  end
-
-  defp build_skill_list(true), do: @always_installed_skills ++ @github_skills
-  defp build_skill_list(false), do: @always_installed_skills
-
-  defp build_active_states(github_flow?, human_review_polling?, human_review_state, rework_state, merging_state) do
+  defp build_active_states(hosted_review_flow?, human_review_polling?, human_review_state, rework_state, merging_state) do
     base = [@default_todo_state, @default_in_progress_state, rework_state]
     base = if human_review_polling?, do: base ++ [human_review_state], else: base
 
-    case {github_flow?, merging_state} do
+    case {hosted_review_flow?, merging_state} do
       {true, state} when is_binary(state) -> base ++ [state]
       _ -> base
     end
   end
 
-  defp required_linear_states(plan) do
-    []
-    |> maybe_add_state(plan.human_review_polling?, plan.human_review_state)
-    |> maybe_add_state(true, plan.rework_state)
-    |> maybe_add_state(not is_nil(plan.merging_state), plan.merging_state)
-  end
+  defp required_tracker_states(plan), do: tracker_provider_module(plan).initial_status_expectations(plan)
 
   defp maybe_add_state(states, true, state) when is_binary(state), do: states ++ [state]
   defp maybe_add_state(states, _include?, _state), do: states
@@ -803,7 +879,7 @@ defmodule SymphonyElixir.Bootstrap do
     "- `#{human_review_state}` -> do not make code changes unless new review feedback requires it; poll comments and review signals, then move to `#{@default_rework_state}` or the next handoff state."
   end
 
-  defp status_line_for_human_review(%{human_review_state: human_review_state, github_flow?: true}) do
+  defp status_line_for_human_review(%{human_review_state: human_review_state, hosted_review_flow?: true}) do
     "- `#{human_review_state}` -> passive human handoff; no agent runs in this state. Humans must move the issue to `#{@default_rework_state}` or `#{@default_merging_state}`."
   end
 
@@ -819,19 +895,13 @@ defmodule SymphonyElixir.Bootstrap do
     "5. Run `#{command}` before any handoff and record the exact result."
   end
 
-  defp execution_flow_line_for_pr(%{github_flow?: true}) do
-    "6. When a PR exists, attach or update the PR URL on the Linear issue and sweep all new PR review feedback before returning to `#{@default_human_review_state}`."
+  defp provider_execution_flow_lines(%{hosted_review_flow?: true} = plan) do
+    forge_provider_module(plan).execution_flow_lines(plan)
   end
 
-  defp execution_flow_line_for_pr(%{github_flow?: false}) do
-    "6. Use Linear comments and state transitions as the primary handoff surface."
+  defp provider_execution_flow_lines(_plan) do
+    ["6. Use tracker comments and state transitions as the primary handoff surface."]
   end
-
-  defp execution_flow_line_for_merge(%{github_flow?: true, merging_state: merging_state}) do
-    "7. When the issue reaches `#{merging_state}`, open `.codex/skills/land/SKILL.md` and follow it."
-  end
-
-  defp execution_flow_line_for_merge(%{github_flow?: false}), do: nil
 
   defp maybe_append_lines(lines, true, extra), do: lines ++ extra
   defp maybe_append_lines(lines, false, _extra), do: lines
@@ -840,6 +910,13 @@ defmodule SymphonyElixir.Bootstrap do
 
   defp maybe_append_section(lines, heading, body) do
     lines ++ ["", heading, "", body]
+  end
+
+  defp forge_provider_module(%{forge_provider: %{module: module}}), do: module
+  defp tracker_provider_module(%{tracker_provider: %{module: module}}), do: module
+
+  defp common_skill_name?(skill_name) when is_binary(skill_name) do
+    skill_name in @always_installed_skills
   end
 
   defp gstack_defaults_line(%{vendor_gstack?: true, gstack_target_root: gstack_target_root}) do
@@ -912,8 +989,8 @@ defmodule SymphonyElixir.Bootstrap do
     "- Pre-merge hardening: review the final diff, rerun validation, and make the handoff reviewer-ready."
   end
 
-  defp skill_routing_release_line(%{vendor_gstack?: true}) do
-    "- Publish / docs refresh: use `gstack /ship` for PR/release flow and `gstack /document-release` after behavior or process docs change."
+  defp skill_routing_release_line(%{vendor_gstack?: true, hosted_review_flow?: true} = plan) do
+    forge_provider_module(plan).release_skill_routing_line(plan)
   end
 
   defp skill_routing_release_line(_plan) do
@@ -986,7 +1063,9 @@ defmodule SymphonyElixir.Bootstrap do
       "## Bootstrap Defaults",
       "",
       "- Validation command: #{plan.validation_command || "not configured"}",
-      "- GitHub PR workflow: #{bool_label(plan.github_flow?)}",
+      "- Tracker provider: #{tracker_provider_module(plan).display_name()}",
+      "- Forge provider: #{plan.forge_provider.display_name}",
+      "- Hosted review automation: #{bool_label(plan.hosted_review_flow?)}",
       "- gstack vendored: #{yes_no(plan.vendor_gstack?)}"
     ]
     |> Enum.join("\n")
@@ -1011,15 +1090,34 @@ defmodule SymphonyElixir.Bootstrap do
   defp default_after_create_command(nil), do: "git clone --depth 1 <repo-url> ."
   defp default_after_create_command(remote_url), do: "git clone --depth 1 #{remote_url} ."
 
-  defp locate_gstack_root do
-    candidates =
-      [
-        Path.join(System.get_env("CODEX_HOME") || Path.join(System.user_home!(), ".codex"), "skills/gstack"),
-        Path.join(System.user_home!(), ".claude/skills/gstack"),
-        Path.join(System.user_home!(), ".codex/skills/gstack")
-      ]
+  defp default_tracker_provider_key(remote_url) when is_binary(remote_url) do
+    case detect_forge_provider(remote_url) do
+      %{key: "gitlab"} -> "gitlab"
+      _ -> "linear"
+    end
+  end
 
-    Enum.find(candidates, &File.dir?/1)
+  defp default_tracker_provider_key(_remote_url), do: "linear"
+
+  defp tracker_provider(key) when is_binary(key) do
+    Map.fetch!(@tracker_providers, key)
+  end
+
+  defp detect_forge_provider(remote_url) when is_binary(remote_url) do
+    normalized = String.downcase(String.trim(remote_url))
+
+    cond do
+      String.contains?(normalized, "github.com") -> forge_provider("github")
+      String.contains?(normalized, "gitlab") -> forge_provider("gitlab")
+      String.contains?(normalized, "gitea") -> forge_provider("gitea")
+      true -> forge_provider("none")
+    end
+  end
+
+  defp detect_forge_provider(_remote_url), do: forge_provider("none")
+
+  defp forge_provider(key) when is_binary(key) do
+    Map.fetch!(@forge_providers, key)
   end
 
   defp install_gstack_from_github(repo_url, ref, target_root)
