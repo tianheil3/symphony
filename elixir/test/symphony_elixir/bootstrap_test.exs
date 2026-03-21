@@ -24,6 +24,7 @@ defmodule SymphonyElixir.BootstrapTest do
           "\n",
           "\n",
           "\n",
+          "\n",
           "Keep CI green.\n",
           ".\n",
           "Manual smoke test passes.\n",
