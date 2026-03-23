@@ -1392,6 +1392,139 @@ defmodule SymphonyElixir.CoreTest do
     end
   end
 
+  test "agent runner retries once with danger-full-access when Codex reports unsupported bwrap argv0" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-bwrap-compat-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      template_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex.trace")
+      run_count_file = Path.join(test_root, "codex-run-count.txt")
+
+      File.mkdir_p!(template_repo)
+      File.write!(Path.join(template_repo, "README.md"), "# test")
+      System.cmd("git", ["-C", template_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", template_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", template_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", template_repo, "add", "README.md"])
+      System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex.trace}"
+      run_count_file="${SYMP_TEST_CODEx_RUN_COUNT_FILE:-/tmp/codex-run-count.txt}"
+      previous_runs="$(cat "$run_count_file" 2>/dev/null || printf '0')"
+      run_id=$((previous_runs + 1))
+      printf '%s' "$run_id" > "$run_count_file"
+      printf 'RUN:%s\\n' "$run_id" >> "$trace_file"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '{"id":2,"result":{"thread":{"id":"thread-bwrap-%s"}}}\\n' "$run_id"
+            ;;
+          4)
+            printf '{"id":3,"result":{"turn":{"id":"turn-bwrap-%s"}}}\\n' "$run_id"
+
+            if [ "$run_id" -eq 1 ]; then
+              printf '%s\\n' 'bwrap: Unknown option --argv0' >&2
+              exit 1
+            else
+              printf '%s\\n' '{"method":"turn/completed"}'
+              exit 0
+            fi
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+      System.put_env("SYMP_TEST_CODEx_RUN_COUNT_FILE", run_count_file)
+
+      on_exit(fn ->
+        System.delete_env("SYMP_TEST_CODEx_TRACE")
+        System.delete_env("SYMP_TEST_CODEx_RUN_COUNT_FILE")
+      end)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-bwrap-compat",
+        identifier: "MT-249",
+        title: "Fallback after unsupported bwrap argv0",
+        description: "Retry with a compatible sandbox policy after a known local runner failure",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-249",
+        labels: []
+      }
+
+      state_fetcher = fn [_issue_id] ->
+        {:ok, [%{issue | state: "Done"}]}
+      end
+
+      assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: state_fetcher)
+
+      trace_lines = File.read!(trace_file) |> String.split("\n", trim: true)
+      assert Enum.count(trace_lines, &String.starts_with?(&1, "RUN:")) == 2
+
+      payloads =
+        trace_lines
+        |> Enum.filter(&String.starts_with?(&1, "JSON:"))
+        |> Enum.map(&String.trim_leading(&1, "JSON:"))
+        |> Enum.map(&Jason.decode!/1)
+
+      thread_sandboxes =
+        payloads
+        |> Enum.filter(&(&1["method"] == "thread/start"))
+        |> Enum.map(&get_in(&1, ["params", "sandbox"]))
+
+      assert thread_sandboxes == ["workspace-write", "danger-full-access"]
+
+      turn_policies =
+        payloads
+        |> Enum.filter(&(&1["method"] == "turn/start"))
+        |> Enum.map(&get_in(&1, ["params", "sandboxPolicy"]))
+
+      assert turn_policies == [
+               %{
+                 "type" => "workspaceWrite",
+                 "writableRoots" => [Path.expand(Path.join(workspace_root, "MT-249"))],
+                 "readOnlyAccess" => %{"type" => "fullAccess"},
+                 "networkAccess" => false,
+                 "excludeTmpdirEnvVar" => false,
+                 "excludeSlashTmp" => false
+               },
+               %{"type" => "dangerFullAccess"}
+             ]
+    after
+      System.delete_env("SYMP_TEST_CODEx_TRACE")
+      System.delete_env("SYMP_TEST_CODEx_RUN_COUNT_FILE")
+      File.rm_rf(test_root)
+    end
+  end
+
   test "app server starts with workspace cwd and expected startup command" do
     test_root =
       Path.join(

@@ -12,6 +12,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   @port_line_bytes 1_048_576
   @max_stream_log_bytes 1_000
   @non_interactive_tool_input_answer "This is a non-interactive session. Operator input is unavailable."
+  @bubblewrap_argv0_error "bwrap: Unknown option --argv0"
 
   @type session :: %{
           port: port(),
@@ -44,7 +45,7 @@ defmodule SymphonyElixir.Codex.AppServer do
          {:ok, port} <- start_port(expanded_workspace, worker_host) do
       metadata = port_metadata(port, worker_host)
 
-      with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host),
+      with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host, opts),
            {:ok, thread_id} <- do_start_session(port, expanded_workspace, session_policies) do
         {:ok,
          %{
@@ -262,12 +263,12 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp session_policies(workspace, nil) do
-    Config.codex_runtime_settings(workspace)
+  defp session_policies(workspace, nil, opts) do
+    Config.codex_runtime_settings(workspace, opts)
   end
 
-  defp session_policies(workspace, worker_host) when is_binary(worker_host) do
-    Config.codex_runtime_settings(workspace, remote: true)
+  defp session_policies(workspace, worker_host, opts) when is_binary(worker_host) do
+    Config.codex_runtime_settings(workspace, Keyword.put(opts, :remote, true))
   end
 
   defp do_start_session(port, workspace, session_policies) do
@@ -422,17 +423,23 @@ defmodule SymphonyElixir.Codex.AppServer do
       {:error, _reason} ->
         log_non_json_stream_line(payload_string, "turn stream")
 
-        emit_message(
-          on_message,
-          :malformed,
-          %{
-            payload: payload_string,
-            raw: payload_string
-          },
-          metadata_from_message(port, %{raw: payload_string})
-        )
+        case compatibility_error_for_stream_line(payload_string) do
+          {:error, reason} ->
+            {:error, reason}
 
-        receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
+          nil ->
+            emit_message(
+              on_message,
+              :malformed,
+              %{
+                payload: payload_string,
+                raw: payload_string
+              },
+              metadata_from_message(port, %{raw: payload_string})
+            )
+
+            receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
+        end
     end
   end
 
@@ -957,7 +964,29 @@ defmodule SymphonyElixir.Codex.AppServer do
 
       {:error, _} ->
         log_non_json_stream_line(payload, "response stream")
-        with_timeout_response(port, request_id, timeout_ms, "")
+
+        case compatibility_error_for_stream_line(payload) do
+          {:error, reason} -> {:error, reason}
+          nil -> with_timeout_response(port, request_id, timeout_ms, "")
+        end
+    end
+  end
+
+  defp compatibility_error_for_stream_line(data) do
+    text =
+      data
+      |> to_string()
+      |> String.trim()
+
+    cond do
+      text == "" ->
+        nil
+
+      String.contains?(text, @bubblewrap_argv0_error) ->
+        {:error, {:bubblewrap_argv0_unsupported, text}}
+
+      true ->
+        nil
     end
   end
 

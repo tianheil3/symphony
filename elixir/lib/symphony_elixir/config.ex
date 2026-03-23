@@ -109,9 +109,23 @@ defmodule SymphonyElixir.Config do
            approval_policy: settings.codex.approval_policy,
            thread_sandbox: settings.codex.thread_sandbox,
            turn_sandbox_policy: turn_sandbox_policy
-         }}
+         }
+         |> apply_codex_runtime_overrides(opts)}
       end
     end
+  end
+
+  defp apply_codex_runtime_overrides(runtime_settings, opts) when is_map(runtime_settings) do
+    runtime_settings
+    |> maybe_put_runtime_override(:approval_policy, Keyword.get(opts, :approval_policy))
+    |> maybe_put_runtime_override(:thread_sandbox, Keyword.get(opts, :thread_sandbox))
+    |> maybe_put_runtime_override(:turn_sandbox_policy, Keyword.get(opts, :turn_sandbox_policy))
+  end
+
+  defp maybe_put_runtime_override(runtime_settings, _key, nil), do: runtime_settings
+
+  defp maybe_put_runtime_override(runtime_settings, key, value) when is_map(runtime_settings) do
+    Map.put(runtime_settings, key, value)
   end
 
   defp validate_semantics(settings) do

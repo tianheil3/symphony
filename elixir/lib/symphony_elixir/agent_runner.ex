@@ -7,6 +7,9 @@ defmodule SymphonyElixir.AgentRunner do
   alias SymphonyElixir.Codex.AppServer
   alias SymphonyElixir.{Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
 
+  @bubblewrap_compat_thread_sandbox "danger-full-access"
+  @bubblewrap_compat_turn_sandbox_policy %{"type" => "dangerFullAccess"}
+
   @type worker_host :: String.t() | nil
 
   @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
@@ -96,59 +99,212 @@ defmodule SymphonyElixir.AgentRunner do
     max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
 
-    with {:ok, session} <- AppServer.start_session(workspace, worker_host: worker_host) do
+    run_codex_turns_with_session(
+      workspace,
+      issue,
+      codex_update_recipient,
+      opts,
+      issue_state_fetcher,
+      1,
+      max_turns,
+      worker_host,
+      false,
+      false
+    )
+  end
+
+  defp run_codex_turns_with_session(
+         workspace,
+         issue,
+         codex_update_recipient,
+         opts,
+         issue_state_fetcher,
+         turn_number,
+         max_turns,
+         worker_host,
+         compatibility_fallback?,
+         restarted_session?
+       ) do
+    with {:ok, session} <- AppServer.start_session(workspace, session_start_opts(worker_host, compatibility_fallback?)) do
       try do
-        do_run_codex_turns(session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, 1, max_turns)
+        do_run_codex_turns(
+          session,
+          workspace,
+          issue,
+          codex_update_recipient,
+          opts,
+          issue_state_fetcher,
+          turn_number,
+          max_turns,
+          worker_host,
+          compatibility_fallback?,
+          restarted_session?
+        )
       after
         AppServer.stop_session(session)
       end
+    else
+      {:error, reason} ->
+        maybe_retry_with_compatibility_fallback(
+          reason,
+          workspace,
+          issue,
+          codex_update_recipient,
+          opts,
+          issue_state_fetcher,
+          turn_number,
+          max_turns,
+          worker_host,
+          compatibility_fallback?
+        )
     end
   end
 
-  defp do_run_codex_turns(app_session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, turn_number, max_turns) do
-    prompt = build_turn_prompt(issue, opts, turn_number, max_turns)
+  defp do_run_codex_turns(
+         app_session,
+         workspace,
+         issue,
+         codex_update_recipient,
+         opts,
+         issue_state_fetcher,
+         turn_number,
+         max_turns,
+         worker_host,
+         compatibility_fallback?,
+         restarted_session?
+       ) do
+    prompt = build_turn_prompt(issue, opts, turn_number, max_turns, restarted_session?)
 
-    with {:ok, turn_session} <-
-           AppServer.run_turn(
-             app_session,
-             prompt,
-             issue,
-             on_message: codex_message_handler(codex_update_recipient, issue)
-           ) do
-      Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
+    case AppServer.run_turn(
+           app_session,
+           prompt,
+           issue,
+           on_message: codex_message_handler(codex_update_recipient, issue)
+         ) do
+      {:ok, turn_session} ->
+        Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
-      case continue_with_issue?(issue, issue_state_fetcher) do
-        {:continue, refreshed_issue} when turn_number < max_turns ->
-          Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
+        case continue_with_issue?(issue, issue_state_fetcher) do
+          {:continue, refreshed_issue} when turn_number < max_turns ->
+            Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
 
-          do_run_codex_turns(
-            app_session,
-            workspace,
-            refreshed_issue,
-            codex_update_recipient,
-            opts,
-            issue_state_fetcher,
-            turn_number + 1,
-            max_turns
-          )
+            do_run_codex_turns(
+              app_session,
+              workspace,
+              refreshed_issue,
+              codex_update_recipient,
+              opts,
+              issue_state_fetcher,
+              turn_number + 1,
+              max_turns,
+              worker_host,
+              compatibility_fallback?,
+              false
+            )
 
-        {:continue, refreshed_issue} ->
-          Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator")
+          {:continue, refreshed_issue} ->
+            Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator")
 
-          :ok
+            :ok
 
-        {:done, _refreshed_issue} ->
-          :ok
+          {:done, _refreshed_issue} ->
+            :ok
 
-        {:error, reason} ->
-          {:error, reason}
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      {:error, reason} ->
+        maybe_retry_with_compatibility_fallback(
+          reason,
+          workspace,
+          issue,
+          codex_update_recipient,
+          opts,
+          issue_state_fetcher,
+          turn_number,
+          max_turns,
+          worker_host,
+          compatibility_fallback?
+        )
+    end
+  end
+
+  defp session_start_opts(worker_host, compatibility_fallback?) do
+    opts =
+      case worker_host do
+        host when is_binary(host) -> [worker_host: host]
+        _ -> []
       end
+
+    if compatibility_fallback? do
+      opts ++
+        [
+          thread_sandbox: @bubblewrap_compat_thread_sandbox,
+          turn_sandbox_policy: @bubblewrap_compat_turn_sandbox_policy
+        ]
+    else
+      opts
     end
   end
 
-  defp build_turn_prompt(issue, opts, 1, _max_turns), do: PromptBuilder.build_prompt(issue, opts)
+  defp maybe_retry_with_compatibility_fallback(
+         {:bubblewrap_argv0_unsupported, detail},
+         workspace,
+         issue,
+         codex_update_recipient,
+         opts,
+         issue_state_fetcher,
+         turn_number,
+         max_turns,
+         worker_host,
+         false
+       ) do
+    Logger.warning("Codex sandbox failed for #{issue_context(issue)} with unsupported bubblewrap argv0 (#{detail}); retrying once with danger-full-access")
 
-  defp build_turn_prompt(_issue, _opts, turn_number, max_turns) do
+    run_codex_turns_with_session(
+      workspace,
+      issue,
+      codex_update_recipient,
+      opts,
+      issue_state_fetcher,
+      turn_number,
+      max_turns,
+      worker_host,
+      true,
+      true
+    )
+  end
+
+  defp maybe_retry_with_compatibility_fallback(
+         reason,
+         _workspace,
+         _issue,
+         _codex_update_recipient,
+         _opts,
+         _issue_state_fetcher,
+         _turn_number,
+         _max_turns,
+         _worker_host,
+         _compatibility_fallback?
+       ) do
+    {:error, reason}
+  end
+
+  defp build_turn_prompt(issue, opts, 1, _max_turns, false), do: PromptBuilder.build_prompt(issue, opts)
+
+  defp build_turn_prompt(issue, opts, 1, _max_turns, true) do
+    PromptBuilder.build_prompt(issue, opts) <>
+      """
+
+      Compatibility restart guidance:
+
+      - The previous Codex session was restarted because the local sandbox reported `bwrap: Unknown option --argv0`.
+      - The workspace state is preserved; continue from the current workspace rather than assuming the prior session survived.
+      """
+  end
+
+  defp build_turn_prompt(_issue, _opts, turn_number, max_turns, false) do
     """
     Continuation guidance:
 
@@ -156,6 +312,18 @@ defmodule SymphonyElixir.AgentRunner do
     - This is continuation turn ##{turn_number} of #{max_turns} for the current agent run.
     - Resume from the current workspace and workpad state instead of restarting from scratch.
     - The original task instructions and prior turn context are already present in this thread, so do not restate them before acting.
+    - Focus on the remaining ticket work and do not end the turn while the issue stays active unless you are truly blocked.
+    """
+  end
+
+  defp build_turn_prompt(_issue, _opts, turn_number, max_turns, true) do
+    """
+    Compatibility restart guidance:
+
+    - The previous Codex session was restarted because the local sandbox reported `bwrap: Unknown option --argv0`.
+    - The workspace and issue state are still present on disk, but prior thread-local session context is unavailable in this new session.
+    - Reconstruct context from the current workspace and workpad before continuing.
+    - This is continuation turn ##{turn_number} of #{max_turns} for the current agent run.
     - Focus on the remaining ticket work and do not end the turn while the issue stays active unless you are truly blocked.
     """
   end
