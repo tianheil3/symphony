@@ -10,6 +10,7 @@ defmodule SymphonyElixir.Installer do
   @spec install(Path.t(), keyword()) :: :ok | {:error, term()}
   def install(manifest_path, opts \\ [])
 
+  @spec install(Path.t(), keyword()) :: :ok | {:error, term()}
   def install(manifest_path, opts) when is_binary(manifest_path) and is_list(opts) do
     expanded_manifest_path = Path.expand(manifest_path)
 

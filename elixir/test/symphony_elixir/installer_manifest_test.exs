@@ -78,6 +78,22 @@ defmodule SymphonyElixir.InstallerManifestTest do
              ])
   end
 
+  test "ensure_compatible!/3 reports installer upgrade requirement before capability mismatches" do
+    assert {:ok, manifest} =
+             Manifest.parse(%{
+               "schema_version" => 1,
+               "installer_version_range" => ">= 9.9.0",
+               "capabilities" => ["repo_first_bootstrap"],
+               "target_repo" => "/tmp/repo"
+             })
+
+    assert {:error, {:installer_upgrade_required, "0.1.0", ">= 9.9.0"}} =
+             Manifest.ensure_compatible!(manifest, "0.1.0", [
+               "repo_first_bootstrap",
+               "launch_verify_v1"
+             ])
+  end
+
   test "tooling policy matrix distinguishes repo assets from machine-local state" do
     matrix = Policy.tooling_policy_matrix()
 

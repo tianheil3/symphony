@@ -7,8 +7,10 @@ defmodule SymphonyElixir.Installer.Apply do
   @spec run(map(), keyword()) :: :ok | {:error, term()}
   def run(manifest, opts \\ [])
 
+  @spec run(map(), keyword()) :: :ok | {:error, term()}
   def run(%{target_repo: target_repo} = manifest, opts) when is_binary(target_repo) and is_list(opts) do
     with :ok <- ensure_target_repo(target_repo),
+         :ok <- maybe_record_resume(target_repo),
          :ok <- SessionState.write_request(target_repo, manifest_to_request(manifest)),
          :ok <- SessionState.write_state(target_repo, %{"phase" => "apply_started"}),
          {:ok, written_paths} <- write_durable_assets(manifest),
@@ -25,6 +27,22 @@ defmodule SymphonyElixir.Installer.Apply do
   end
 
   def run(_manifest, _opts), do: {:error, {:invalid_manifest, :target_repo_required}}
+
+  defp maybe_record_resume(target_repo) when is_binary(target_repo) do
+    case SessionState.load(target_repo) do
+      {:ok, %{"phase" => prior_phase}} when prior_phase in ["apply_started", "failed"] ->
+        with :ok <- SessionState.write_state(target_repo, %{"phase" => "resuming", "from_phase" => prior_phase}),
+             :ok <- SessionState.append_log(target_repo, %{"event" => "resume_detected", "from_phase" => prior_phase}) do
+          :ok
+        end
+
+      {:ok, _state_or_nil} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
   defp ensure_target_repo(target_repo) when is_binary(target_repo) do
     expanded_target_repo = Path.expand(target_repo)

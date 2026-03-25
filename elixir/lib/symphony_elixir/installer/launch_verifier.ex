@@ -33,6 +33,7 @@ defmodule SymphonyElixir.Installer.LaunchVerifier do
   @spec verify(map(), deps()) :: {:ok, %{status: :verified}} | {:error, term()}
   def verify(config, deps \\ runtime_deps())
 
+  @spec verify(map(), deps()) :: {:ok, %{status: :verified}} | {:error, term()}
   def verify(config, deps) when is_map(config) and is_map(deps) do
     with :ok <- validate_config(config),
          :ok <- verify_required_tools(config, deps),

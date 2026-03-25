@@ -1,8 +1,11 @@
 defmodule SymphonyElixir.InstallerApplyTest do
   use ExUnit.Case, async: true
 
+  alias SymphonyElixir.Installer.Apply
   alias SymphonyElixir.Installer.Inspector
   alias SymphonyElixir.Installer.Render
+  alias SymphonyElixir.Installer.SessionState
+  alias SymphonyElixir.TestSupport
 
   test "inspect_target!/2 infers GitHub defaults for supported remotes" do
     target_root = temp_repo_root!("installer-inspector-github")
@@ -72,6 +75,140 @@ defmodule SymphonyElixir.InstallerApplyTest do
     refute Enum.any?(artifacts, &String.ends_with?(&1.path, ".github/pull_request_template.md"))
   end
 
+  test "run/2 writes request/state and launch_verified event on successful launch verification" do
+    parent = self()
+    repo_root = TestSupport.create_temp_git_repo!("installer-apply-run-success")
+    workflow_path = Path.expand(Path.join(repo_root, "WORKFLOW.md"))
+    launch_pid = spawn_sleeping_process()
+
+    on_exit(fn ->
+      if Process.alive?(launch_pid) do
+        Process.exit(launch_pid, :kill)
+      end
+    end)
+
+    manifest = %{
+      target_repo: repo_root,
+      durable_assets: %{
+        "files" => %{
+          "WORKFLOW.md" => "---\ntracker:\n  kind: linear\n---\nPrompt\n"
+        }
+      }
+    }
+
+    launch_verifier_deps = %{
+      resolve_tool: fn _ -> "/opt/tools/fake" end,
+      get_env: fn
+        "GITHUB_TOKEN" -> "token"
+        _ -> nil
+      end,
+      parse_generated_assets: fn assets ->
+        send(parent, {:generated_assets, assets})
+        :ok
+      end,
+      launch_command: fn _ -> {:ok, launch_pid} end,
+      process_running?: &Process.alive?/1,
+      probe_health_surface: fn _ -> :ok end,
+      sleep: fn _ -> :ok end
+    }
+
+    assert :ok =
+             Apply.run(
+               manifest,
+               required_env: ["GITHUB_TOKEN"],
+               launch_verifier_deps: launch_verifier_deps
+             )
+
+    assert_received {:generated_assets, [%{kind: :workflow, path: ^workflow_path}]}
+    assert %{"phase" => "verified"} = TestSupport.read_installer_state!(repo_root)
+
+    assert Enum.any?(TestSupport.read_installer_events!(repo_root), fn event ->
+             event["event"] == "launch_verified"
+           end)
+  end
+
+  test "run/2 records failed state and launch_blocked event when launch verification fails" do
+    repo_root = TestSupport.create_temp_git_repo!("installer-apply-run-failure")
+    launch_pid = spawn_sleeping_process()
+
+    on_exit(fn ->
+      if Process.alive?(launch_pid) do
+        Process.exit(launch_pid, :kill)
+      end
+    end)
+
+    manifest = %{
+      target_repo: repo_root,
+      durable_assets: %{"files" => %{"WORKFLOW.md" => "placeholder"}}
+    }
+
+    launch_verifier_deps = %{
+      resolve_tool: fn _ -> "/opt/tools/fake" end,
+      get_env: fn _ -> nil end,
+      parse_generated_assets: fn _ -> :ok end,
+      launch_command: fn _ -> {:ok, launch_pid} end,
+      process_running?: &Process.alive?/1,
+      probe_health_surface: fn _ -> :ok end,
+      sleep: fn _ -> :ok end
+    }
+
+    assert {:error, {:launch_blocked, :missing_token, "GITHUB_TOKEN"}} =
+             Apply.run(
+               manifest,
+               required_env: ["GITHUB_TOKEN"],
+               launch_verifier_deps: launch_verifier_deps
+             )
+
+    assert %{"phase" => "failed", "reason" => reason} = TestSupport.read_installer_state!(repo_root)
+    assert reason =~ "{:launch_blocked, :missing_token, \"GITHUB_TOKEN\"}"
+
+    assert Enum.any?(TestSupport.read_installer_events!(repo_root), fn event ->
+             event["event"] == "launch_blocked"
+           end)
+  end
+
+  test "run/2 emits resume_detected when previous session phase is apply_started" do
+    repo_root = TestSupport.create_temp_git_repo!("installer-apply-run-resume")
+    launch_pid = spawn_sleeping_process()
+
+    on_exit(fn ->
+      if Process.alive?(launch_pid) do
+        Process.exit(launch_pid, :kill)
+      end
+    end)
+
+    assert :ok = SessionState.write_state(repo_root, %{"phase" => "apply_started"})
+
+    manifest = %{
+      target_repo: repo_root,
+      durable_assets: %{"files" => %{"WORKFLOW.md" => "placeholder"}}
+    }
+
+    launch_verifier_deps = %{
+      resolve_tool: fn _ -> "/opt/tools/fake" end,
+      get_env: fn
+        "GITHUB_TOKEN" -> "token"
+        _ -> nil
+      end,
+      parse_generated_assets: fn _ -> :ok end,
+      launch_command: fn _ -> {:ok, launch_pid} end,
+      process_running?: &Process.alive?/1,
+      probe_health_surface: fn _ -> :ok end,
+      sleep: fn _ -> :ok end
+    }
+
+    assert :ok =
+             Apply.run(
+               manifest,
+               required_env: ["GITHUB_TOKEN"],
+               launch_verifier_deps: launch_verifier_deps
+             )
+
+    assert Enum.any?(TestSupport.read_installer_events!(repo_root), fn event ->
+             event["event"] == "resume_detected" and event["from_phase"] == "apply_started"
+           end)
+  end
+
   defp github_plan(target_root) do
     %{
       target_root: target_root,
@@ -121,5 +258,15 @@ defmodule SymphonyElixir.InstallerApplyTest do
     end)
 
     root
+  end
+
+  defp spawn_sleeping_process do
+    spawn(fn ->
+      receive do
+        :stop -> :ok
+      after
+        5_000 -> :ok
+      end
+    end)
   end
 end

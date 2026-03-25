@@ -76,14 +76,92 @@ defmodule SymphonyElixir.TestSupport do
   def restore_env(key, value), do: System.put_env(key, value)
 
   def create_temp_dir!(prefix) when is_binary(prefix) do
-    path =
-      Path.join(
-        System.tmp_dir!(),
-        "#{prefix}-#{System.unique_integer([:positive])}"
-      )
+    create_unique_temp_dir!(prefix, 0)
+  end
 
-    File.mkdir_p!(path)
-    path
+  def create_temp_git_repo!(prefix), do: create_temp_git_repo!(prefix, "git@github.com:example/demo.git")
+
+  def create_temp_git_repo!(prefix, remote_url) when is_binary(prefix) do
+    repo_root = create_temp_dir!("#{prefix}-repo")
+
+    run_cmd!("git", ["init", "--quiet"], cd: repo_root)
+
+    if is_binary(remote_url) do
+      upsert_git_remote_origin!(repo_root, remote_url)
+    end
+
+    File.mkdir_p!(Path.join(repo_root, ".symphony/install"))
+    repo_root
+  end
+
+  def detect_git_remote!(repo_root) when is_binary(repo_root) do
+    {output, status} = System.cmd("git", ["config", "--get", "remote.origin.url"], cd: repo_root)
+
+    case {status, String.trim(output)} do
+      {0, remote_url} when remote_url != "" ->
+        remote_url
+
+      _ ->
+        raise "failed_to_detect_git_remote for #{repo_root}"
+    end
+  end
+
+  def write_installer_manifest!(repo_root), do: write_installer_manifest!(repo_root, %{})
+
+  def write_installer_manifest!(repo_root, overrides) when is_binary(repo_root) and is_map(overrides) do
+    machine_state = isolated_machine_state_for_repo(repo_root)
+
+    base_manifest = %{
+      "schema_version" => 1,
+      "installer_version_range" => ">= 0.1.0",
+      "capabilities" => ["repo_first_bootstrap", "launch_verify_v1"],
+      "target_repo" => repo_root,
+      "machine_state" => machine_state,
+      "durable_assets" => %{}
+    }
+
+    manifest =
+      base_manifest
+      |> deep_merge(overrides)
+
+    manifest_path = installer_manifest_input_path(repo_root)
+    File.mkdir_p!(Path.dirname(manifest_path))
+    File.write!(manifest_path, Jason.encode!(manifest, pretty: true) <> "\n")
+    manifest_path
+  end
+
+  def installer_manifest_input_path(repo_root) when is_binary(repo_root) do
+    Path.join([repo_root, ".symphony", "install", "manifest-input.json"])
+  end
+
+  def read_installer_request!(repo_root) when is_binary(repo_root) do
+    repo_root
+    |> SymphonyElixir.Installer.SessionState.paths()
+    |> Map.fetch!(:request)
+    |> read_json_file!()
+  end
+
+  def read_installer_state!(repo_root) when is_binary(repo_root) do
+    repo_root
+    |> installer_state_path()
+    |> read_json_file!()
+  end
+
+  def read_installer_events!(repo_root) when is_binary(repo_root) do
+    events_path = Path.join([repo_root, ".symphony", "install", "events.jsonl"])
+
+    case File.read(events_path) do
+      {:ok, contents} ->
+        contents
+        |> String.split("\n", trim: true)
+        |> Enum.map(&Jason.decode!/1)
+
+      {:error, :enoent} ->
+        []
+
+      {:error, reason} ->
+        raise "failed_to_read_installer_events #{events_path}: #{inspect(reason)}"
+    end
   end
 
   def stop_default_http_server do
@@ -303,5 +381,88 @@ defmodule SymphonyElixir.TestSupport do
       |> Enum.map_join("\n", &("    " <> &1))
 
     "  #{name}: |\n#{indented}"
+  end
+
+  defp installer_state_path(repo_root), do: Path.join([repo_root, ".symphony", "install", "state.json"])
+
+  defp create_unique_temp_dir!(prefix, attempts) when attempts < 20 do
+    path = temp_dir_candidate(prefix)
+
+    case File.mkdir(path) do
+      :ok ->
+        path
+
+      {:error, :eexist} ->
+        create_unique_temp_dir!(prefix, attempts + 1)
+
+      {:error, reason} ->
+        raise "failed_to_create_temp_dir #{path}: #{inspect(reason)}"
+    end
+  end
+
+  defp create_unique_temp_dir!(prefix, _attempts) do
+    raise "failed_to_create_unique_temp_dir for prefix #{prefix}"
+  end
+
+  defp temp_dir_candidate(prefix) do
+    token =
+      [
+        Integer.to_string(System.system_time(:nanosecond), 36),
+        Integer.to_string(System.unique_integer([:positive, :monotonic]), 36),
+        Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
+      ]
+      |> Enum.join("-")
+
+    Path.join(System.tmp_dir!(), "#{prefix}-#{token}")
+  end
+
+  defp read_json_file!(path) when is_binary(path) do
+    path
+    |> File.read!()
+    |> Jason.decode!()
+  end
+
+  defp isolated_machine_state_for_repo(repo_root) do
+    cache_dir =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-installer-cache-#{Path.basename(repo_root)}-#{System.unique_integer([:positive])}"
+      )
+
+    %{
+      "installer_cache_dir" => cache_dir,
+      "version_cache_file" => Path.join(cache_dir, "installer-version.json")
+    }
+  end
+
+  defp deep_merge(base, overrides) when is_map(base) and is_map(overrides) do
+    Map.merge(base, overrides, fn _key, left, right ->
+      if is_map(left) and is_map(right) do
+        deep_merge(left, right)
+      else
+        right
+      end
+    end)
+  end
+
+  defp run_cmd!(program, args, opts) when is_binary(program) and is_list(args) and is_list(opts) do
+    {output, status} = System.cmd(program, args, Keyword.put_new(opts, :stderr_to_stdout, true))
+
+    if status == 0 do
+      output
+    else
+      raise "command_failed #{program} #{Enum.join(args, " ")}: #{String.trim(output)}"
+    end
+  end
+
+  defp upsert_git_remote_origin!(repo_root, remote_url) when is_binary(repo_root) and is_binary(remote_url) do
+    {_output, status} =
+      System.cmd("git", ["config", "--get", "remote.origin.url"], cd: repo_root, stderr_to_stdout: true)
+
+    if status == 0 do
+      run_cmd!("git", ["remote", "set-url", "origin", remote_url], cd: repo_root)
+    else
+      run_cmd!("git", ["remote", "add", "origin", remote_url], cd: repo_root)
+    end
   end
 end
