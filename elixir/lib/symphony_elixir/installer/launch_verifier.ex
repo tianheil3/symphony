@@ -48,15 +48,21 @@ defmodule SymphonyElixir.Installer.LaunchVerifier do
   def verify(_config, _deps), do: {:error, {:launch_blocked, :invalid_config, :expected_map}}
 
   defp validate_config(config) do
-    with :ok <- validate_optional_string_list(config, :required_tools),
-         :ok <- validate_optional_string_list(config, :required_env),
-         :ok <- validate_optional_list(config, :generated_assets),
-         :ok <- validate_optional_command(config, :command),
-         :ok <- validate_optional_non_empty_string(config, :dashboard_url),
-         :ok <- validate_optional_positive_integer(config, :health_check_attempts),
-         :ok <- validate_optional_positive_integer(config, :health_check_interval_ms) do
-      :ok
-    end
+    [
+      fn -> validate_optional_string_list(config, :required_tools) end,
+      fn -> validate_optional_string_list(config, :required_env) end,
+      fn -> validate_optional_list(config, :generated_assets) end,
+      fn -> validate_optional_command(config, :command) end,
+      fn -> validate_optional_non_empty_string(config, :dashboard_url) end,
+      fn -> validate_optional_positive_integer(config, :health_check_attempts) end,
+      fn -> validate_optional_positive_integer(config, :health_check_interval_ms) end
+    ]
+    |> Enum.reduce_while(:ok, fn validator, :ok ->
+      case validator.() do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
   end
 
   defp validate_optional_string_list(config, key) when is_map(config) and is_atom(key) do
@@ -65,11 +71,7 @@ defmodule SymphonyElixir.Installer.LaunchVerifier do
         :ok
 
       {:ok, value} when is_list(value) ->
-        if Enum.all?(value, fn entry -> is_binary(entry) and String.trim(entry) != "" end) do
-          :ok
-        else
-          {:error, {:launch_blocked, :invalid_config, {key, :must_be_list_of_strings}}}
-        end
+        validate_string_list(value, key)
 
       {:ok, _value} ->
         {:error, {:launch_blocked, :invalid_config, {key, :must_be_list_of_strings}}}
@@ -92,12 +94,8 @@ defmodule SymphonyElixir.Installer.LaunchVerifier do
       {:ok, nil} ->
         :ok
 
-      {:ok, value} when is_list(value) and value != [] ->
-        if Enum.all?(value, fn entry -> is_binary(entry) and String.trim(entry) != "" end) do
-          :ok
-        else
-          {:error, {:launch_blocked, :invalid_config, {key, :must_be_non_empty_list_of_strings}}}
-        end
+      {:ok, value} when is_list(value) ->
+        validate_non_empty_string_list(value, key)
 
       {:ok, _value} ->
         {:error, {:launch_blocked, :invalid_config, {key, :must_be_non_empty_list_of_strings}}}
@@ -149,16 +147,43 @@ defmodule SymphonyElixir.Installer.LaunchVerifier do
     |> Enum.reduce_while(:ok, fn env_name, :ok ->
       case deps.get_env.(env_name) do
         value when is_binary(value) ->
-          if String.trim(value) == "" do
-            {:halt, {:error, {:launch_blocked, :missing_token, env_name}}}
-          else
-            {:cont, :ok}
-          end
+          verify_required_env_value(value, env_name)
 
         _ ->
           {:halt, {:error, {:launch_blocked, :missing_token, env_name}}}
       end
     end)
+  end
+
+  defp validate_string_list(values, key) when is_list(values) and is_atom(key) do
+    if Enum.all?(values, &non_empty_string?/1) do
+      :ok
+    else
+      {:error, {:launch_blocked, :invalid_config, {key, :must_be_list_of_strings}}}
+    end
+  end
+
+  defp validate_non_empty_string_list([], key) when is_atom(key) do
+    {:error, {:launch_blocked, :invalid_config, {key, :must_be_non_empty_list_of_strings}}}
+  end
+
+  defp validate_non_empty_string_list(values, key) when is_list(values) and is_atom(key) do
+    if Enum.all?(values, &non_empty_string?/1) do
+      :ok
+    else
+      {:error, {:launch_blocked, :invalid_config, {key, :must_be_non_empty_list_of_strings}}}
+    end
+  end
+
+  defp non_empty_string?(value) when is_binary(value), do: String.trim(value) != ""
+  defp non_empty_string?(_value), do: false
+
+  defp verify_required_env_value(value, env_name) when is_binary(value) do
+    if String.trim(value) == "" do
+      {:halt, {:error, {:launch_blocked, :missing_token, env_name}}}
+    else
+      {:cont, :ok}
+    end
   end
 
   defp verify_generated_assets(config, deps) do

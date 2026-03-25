@@ -45,9 +45,10 @@ defmodule SymphonyElixir.Installer.Inspector do
 
   @spec tracker_provider_lookup(String.t()) :: {:ok, map()} | {:error, term()}
   def tracker_provider_lookup(key) when is_binary(key) do
-    with {:ok, provider_module} <- Installer.Descriptors.tracker_provider(key) do
-      {:ok, installer_tracker_provider(key, provider_module)}
-    else
+    case Installer.Descriptors.tracker_provider(key) do
+      {:ok, provider_module} ->
+        {:ok, installer_tracker_provider(key, provider_module)}
+
       {:error, {:unsupported_tracker_provider, _unsupported_key}} ->
         case Map.fetch(@legacy_tracker_providers, key) do
           {:ok, provider} -> {:ok, provider}
@@ -111,20 +112,12 @@ defmodule SymphonyElixir.Installer.Inspector do
 
   defp forge_key(remote_url) when is_binary(remote_url) do
     normalized = String.downcase(String.trim(remote_url))
-
     if normalized != "" and String.contains?(normalized, "github.com"), do: "github", else: "none"
   end
 
-  defp forge_key(_remote_url), do: "none"
-
   defp forge_provider(key) when is_binary(key) do
-    case Installer.Descriptors.forge_provider(key) do
-      {:ok, provider_module} ->
-        installer_forge_provider(key, provider_module)
-
-      {:error, {:unsupported_forge_provider, unsupported_key}} ->
-        raise ArgumentError, "invalid_forge_provider: #{unsupported_key}"
-    end
+    {:ok, provider_module} = Installer.Descriptors.forge_provider(key)
+    installer_forge_provider(key, provider_module)
   end
 
   defp installer_forge_provider(key, provider_module) do

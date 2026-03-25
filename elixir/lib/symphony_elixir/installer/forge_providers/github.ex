@@ -72,11 +72,7 @@ defmodule SymphonyElixir.Installer.ForgeProviders.GitHub do
       end
 
     pr_body_step =
-      if pr_template_supported?(plan) do
-        "6. If `.github/pull_request_template.md` exists, fill it out completely when creating or updating the PR body."
-      else
-        "6. Write a concise PR body that covers context, summary, acceptance criteria, and test plan."
-      end
+      "6. If `.github/pull_request_template.md` exists, fill it out completely when creating or updating the PR body."
 
     """
     ---

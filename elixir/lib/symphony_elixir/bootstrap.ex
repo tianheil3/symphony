@@ -3,6 +3,7 @@ defmodule SymphonyElixir.Bootstrap do
   Interactive bootstrap flow for installing Symphony into another repository.
   """
 
+  alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Installer.Inspector
   alias SymphonyElixir.Installer.Render
 
@@ -144,7 +145,13 @@ defmodule SymphonyElixir.Bootstrap do
 
     with {:ok, tracker_provider} <- ask_tracker_provider(inspection, deps),
          {:ok, repo_name} <- ask_text("Repository name", repo_name_default, deps, required: true),
-         {:ok, project_slug} <- ask_text(tracker_provider_module(%{tracker_provider: tracker_provider}).project_slug_prompt(), nil, deps, required: true),
+         {:ok, project_slug} <-
+           ask_text(
+             tracker_provider_module(%{tracker_provider: tracker_provider}).project_slug_prompt(),
+             nil,
+             deps,
+             required: true
+           ),
          {:ok, workspace_root} <- ask_text("Workspace root", default_workspace_root, deps, required: true),
          {:ok, after_create_command} <-
            ask_text("Workspace bootstrap command", default_after_create, deps, required: true),
@@ -169,7 +176,16 @@ defmodule SymphonyElixir.Bootstrap do
       rework_state = @default_rework_state
       merging_state = if(hosted_review_flow?, do: @default_merging_state, else: nil)
       done_state = @default_done_state
-      active_states = build_active_states(hosted_review_flow?, human_review_polling?, human_review_state, rework_state, merging_state)
+
+      active_states =
+        build_active_states(
+          hosted_review_flow?,
+          human_review_polling?,
+          human_review_state,
+          rework_state,
+          merging_state
+        )
+
       skills = build_skill_list(forge_provider, hosted_review_flow?)
 
       {:ok,
@@ -215,12 +231,9 @@ defmodule SymphonyElixir.Bootstrap do
       {:ok, key} ->
         normalized_key = String.downcase(String.trim(key))
 
-        with {:ok, provider} <- Inspector.tracker_provider_lookup(normalized_key) do
-          {:ok, provider}
-        else
-          {:error, {:unsupported_tracker_provider, _unsupported_key}} ->
-            deps.say.("Unsupported tracker provider: #{key}")
-            ask_tracker_provider(inspection, deps)
+        case Inspector.tracker_provider_lookup(normalized_key) do
+          {:ok, provider} ->
+            {:ok, provider}
 
           {:error, _reason} ->
             deps.say.("Unsupported tracker provider: #{key}")
@@ -429,13 +442,12 @@ defmodule SymphonyElixir.Bootstrap do
   defp install_plan(plan, deps) do
     Render.planned_artifacts(plan)
     |> Enum.each(fn artifact ->
-      deps.mkdir_p!.(Path.dirname(artifact.path))
+      artifact_dir = Path.dirname(artifact.path)
+      deps.mkdir_p!.(artifact_dir)
       deps.write_file!.(artifact.path, artifact.content)
     end)
 
-    with :ok <- maybe_install_gstack(plan, deps) do
-      :ok
-    end
+    maybe_install_gstack(plan, deps)
   rescue
     error in [File.Error] ->
       {:error, "Failed to write bootstrap files: #{Exception.message(error)}"}
@@ -448,9 +460,8 @@ defmodule SymphonyElixir.Bootstrap do
 
     with :ok <- verify_artifact_paths(artifact_paths, deps),
          :ok <- verify_workflow_file(plan),
-         :ok <- verify_gstack_installation(plan, deps),
-         :ok <- verify_hosted_review_tooling(plan, deps) do
-      :ok
+         :ok <- verify_gstack_installation(plan, deps) do
+      verify_hosted_review_tooling(plan, deps)
     end
   end
 
@@ -470,7 +481,7 @@ defmodule SymphonyElixir.Bootstrap do
     workflow_path = Path.join(plan.target_root, "WORKFLOW.md")
 
     with {:ok, %{config: config}} <- SymphonyElixir.Workflow.load(workflow_path),
-         {:ok, _parsed} <- SymphonyElixir.Config.Schema.parse(config) do
+         {:ok, _parsed} <- Schema.parse(config) do
       :ok
     else
       {:error, reason} ->
@@ -526,7 +537,8 @@ defmodule SymphonyElixir.Bootstrap do
   defp maybe_install_gstack(%{vendor_gstack?: false}, _deps), do: :ok
 
   defp maybe_install_gstack(plan, deps) do
-    deps.mkdir_p!.(Path.dirname(plan.gstack_target_root))
+    gstack_parent_dir = Path.dirname(plan.gstack_target_root)
+    deps.mkdir_p!.(gstack_parent_dir)
     deps.remove_path!.(plan.gstack_target_root)
     deps.install_gstack_from_github.(plan.gstack_source_root, plan.gstack_ref, plan.gstack_target_root)
 
@@ -598,13 +610,7 @@ defmodule SymphonyElixir.Bootstrap do
             :ok
 
           {output, status} ->
-            message =
-              output
-              |> String.trim()
-              |> case do
-                "" -> "git clone exited with status #{status}."
-                text -> "git clone exited with status #{status}: #{text}"
-              end
+            message = command_failure_message("git clone", status, output)
 
             {:error, message}
         end
@@ -622,13 +628,7 @@ defmodule SymphonyElixir.Bootstrap do
             :ok
 
           {output, status} ->
-            message =
-              output
-              |> String.trim()
-              |> case do
-                "" -> "gstack setup exited with status #{status}."
-                text -> "gstack setup exited with status #{status}: #{text}"
-              end
+            message = command_failure_message("gstack setup", status, output)
 
             {:error, message}
         end
@@ -642,22 +642,34 @@ defmodule SymphonyElixir.Bootstrap do
 
   defp maybe_append_git_ref(args, _ref), do: args
 
+  defp command_failure_message(command, status, output) do
+    case String.trim(output) do
+      "" -> "#{command} exited with status #{status}."
+      text -> "#{command} exited with status #{status}: #{text}"
+    end
+  end
+
   defp detect_git_remote(target_root) when is_binary(target_root) do
     case System.find_executable("git") do
       nil ->
         nil
 
       git ->
-        case System.cmd(git, ["-C", target_root, "remote", "get-url", "origin"], stderr_to_stdout: true) do
-          {output, 0} ->
-            case String.trim(output) do
-              "" -> nil
-              remote_url -> remote_url
-            end
+        detect_git_remote_with(git, target_root)
+    end
+  end
 
-          _ ->
-            nil
-        end
+  defp detect_git_remote_with(git, target_root) do
+    case System.cmd(git, ["-C", target_root, "remote", "get-url", "origin"], stderr_to_stdout: true) do
+      {output, 0} -> normalize_remote_url(output)
+      _ -> nil
+    end
+  end
+
+  defp normalize_remote_url(output) do
+    case String.trim(output) do
+      "" -> nil
+      remote_url -> remote_url
     end
   end
 end

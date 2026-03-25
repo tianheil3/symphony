@@ -31,9 +31,12 @@ defmodule SymphonyElixir.Installer.Apply do
   defp maybe_record_resume(target_repo) when is_binary(target_repo) do
     case SessionState.load(target_repo) do
       {:ok, %{"phase" => prior_phase}} when prior_phase in ["apply_started", "failed"] ->
-        with :ok <- SessionState.write_state(target_repo, %{"phase" => "resuming", "from_phase" => prior_phase}),
-             :ok <- SessionState.append_log(target_repo, %{"event" => "resume_detected", "from_phase" => prior_phase}) do
-          :ok
+        case SessionState.write_state(target_repo, %{"phase" => "resuming", "from_phase" => prior_phase}) do
+          :ok ->
+            SessionState.append_log(target_repo, %{"event" => "resume_detected", "from_phase" => prior_phase})
+
+          {:error, reason} ->
+            {:error, reason}
         end
 
       {:ok, _state_or_nil} ->
@@ -68,24 +71,26 @@ defmodule SymphonyElixir.Installer.Apply do
   defp normalize_request_value(value), do: value
 
   defp write_durable_assets(%{target_repo: target_repo, durable_assets: durable_assets}) do
-    with {:ok, files} <- durable_asset_files(durable_assets) do
-      Enum.reduce_while(files, {:ok, []}, fn {relative_path, content}, {:ok, acc_paths} ->
-        case write_durable_asset(target_repo, relative_path, content) do
-          {:ok, written_path} ->
-            {:cont, {:ok, [written_path | acc_paths]}}
-
-          {:error, reason} ->
-            {:halt, {:error, reason}}
-        end
-      end)
-      |> case do
-        {:ok, paths} -> {:ok, Enum.reverse(paths)}
-        error -> error
-      end
+    with {:ok, files} <- durable_asset_files(durable_assets),
+         {:ok, reversed_paths} <- write_durable_asset_files(target_repo, files) do
+      {:ok, Enum.reverse(reversed_paths)}
     end
   end
 
   defp write_durable_assets(%{target_repo: _target_repo}), do: {:ok, []}
+
+  defp write_durable_asset_files(target_repo, files) when is_list(files) do
+    Enum.reduce_while(files, {:ok, []}, fn file, {:ok, acc_paths} ->
+      append_written_asset_path(target_repo, file, acc_paths)
+    end)
+  end
+
+  defp append_written_asset_path(target_repo, {relative_path, content}, acc_paths) do
+    case write_durable_asset(target_repo, relative_path, content) do
+      {:ok, written_path} -> {:cont, {:ok, [written_path | acc_paths]}}
+      {:error, reason} -> {:halt, {:error, reason}}
+    end
+  end
 
   defp durable_asset_files(durable_assets) when is_map(durable_assets) do
     unsupported_keys =

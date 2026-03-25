@@ -56,11 +56,10 @@ defmodule SymphonyElixir.Installer.Manifest do
   @spec ensure_compatible!(t(), String.t(), [String.t()]) :: :ok | {:error, term()}
   def ensure_compatible!(manifest, installer_version, required_capabilities)
       when is_map(manifest) and is_binary(installer_version) and is_list(required_capabilities) do
-    with :ok <- ensure_schema_compatible(manifest),
-         :ok <- ensure_installer_version(manifest, installer_version),
-         :ok <- ensure_capabilities(manifest, required_capabilities) do
-      :ok
-    end
+    :ok
+    |> continue_if_ok(fn -> ensure_schema_compatible(manifest) end)
+    |> continue_if_ok(fn -> ensure_installer_version(manifest, installer_version) end)
+    |> continue_if_ok(fn -> ensure_capabilities(manifest, required_capabilities) end)
   end
 
   def ensure_compatible!(_manifest, _installer_version, _required_capabilities),
@@ -85,19 +84,24 @@ defmodule SymphonyElixir.Installer.Manifest do
         {:ok, nil}
 
       value when is_binary(value) ->
-        normalized = String.trim(value)
-
-        if normalized == "" do
-          {:ok, nil}
-        else
-          case Version.parse_requirement(normalized) do
-            {:ok, _requirement} -> {:ok, normalized}
-            :error -> {:error, {:invalid_manifest, {:installer_version_range, normalized}}}
-          end
-        end
+        parse_installer_version_range_value(value)
 
       _ ->
         {:error, {:invalid_manifest, {:installer_version_range, :must_be_string}}}
+    end
+  end
+
+  defp parse_installer_version_range_value(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> {:ok, nil}
+      normalized -> parse_installer_requirement_value(normalized)
+    end
+  end
+
+  defp parse_installer_requirement_value(normalized) when is_binary(normalized) do
+    case Version.parse_requirement(normalized) do
+      {:ok, _requirement} -> {:ok, normalized}
+      :error -> {:error, {:invalid_manifest, {:installer_version_range, normalized}}}
     end
   end
 
@@ -315,4 +319,7 @@ defmodule SymphonyElixir.Installer.Manifest do
       true -> nil
     end
   end
+
+  defp continue_if_ok(:ok, next_fun) when is_function(next_fun, 0), do: next_fun.()
+  defp continue_if_ok(error, _next_fun), do: error
 end

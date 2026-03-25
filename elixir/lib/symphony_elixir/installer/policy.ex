@@ -121,16 +121,7 @@ defmodule SymphonyElixir.Installer.Policy do
         parse_known_policy_value(value, atom_key)
 
       value when is_binary(value) ->
-        normalized = value |> String.trim() |> String.downcase()
-
-        if normalized == "" do
-          {:error, {:invalid_manifest, {atom_key, :must_not_be_blank}}}
-        else
-          case Enum.find(@known_policy_values, &(Atom.to_string(&1) == normalized)) do
-            nil -> {:error, {:invalid_manifest, {atom_key, :unknown_policy_value}}}
-            known_value -> {:ok, known_value}
-          end
-        end
+        parse_known_policy_string(value, atom_key)
 
       _other ->
         {:error, {:invalid_manifest, {atom_key, :must_be_string_or_atom}}}
@@ -167,6 +158,27 @@ defmodule SymphonyElixir.Installer.Policy do
       {:error, {:invalid_manifest, {atom_key, :unknown_policy_value}}}
     end
   end
+
+  defp parse_known_policy_string(value, atom_key) when is_binary(value) do
+    normalized = value |> String.trim() |> String.downcase()
+
+    case normalized do
+      "" ->
+        {:error, {:invalid_manifest, {atom_key, :must_not_be_blank}}}
+
+      _ ->
+        normalized
+        |> find_known_policy_value()
+        |> maybe_known_policy_value(atom_key)
+    end
+  end
+
+  defp find_known_policy_value(normalized) when is_binary(normalized) do
+    Enum.find(@known_policy_values, &(Atom.to_string(&1) == normalized))
+  end
+
+  defp maybe_known_policy_value(nil, atom_key), do: {:error, {:invalid_manifest, {atom_key, :unknown_policy_value}}}
+  defp maybe_known_policy_value(known_value, _atom_key), do: {:ok, known_value}
 
   defp map_value(map, string_key, atom_key) do
     cond do

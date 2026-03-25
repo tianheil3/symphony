@@ -46,24 +46,7 @@ defmodule SymphonyElixir.CLI do
         evaluate_install(rest, deps)
 
       _ ->
-        case OptionParser.parse(args, strict: @switches) do
-          {opts, [], []} ->
-            with :ok <- require_guardrails_acknowledgement(opts),
-                 :ok <- maybe_set_logs_root(opts, deps),
-                 :ok <- maybe_set_server_port(opts, deps) do
-              run(Path.expand("WORKFLOW.md"), deps)
-            end
-
-          {opts, [workflow_path], []} ->
-            with :ok <- require_guardrails_acknowledgement(opts),
-                 :ok <- maybe_set_logs_root(opts, deps),
-                 :ok <- maybe_set_server_port(opts, deps) do
-              run(workflow_path, deps)
-            end
-
-          _ ->
-            {:error, usage_message()}
-        end
+        evaluate_workflow_command(args, deps)
     end
   end
 
@@ -118,13 +101,34 @@ defmodule SymphonyElixir.CLI do
   defp evaluate_install(args, deps) do
     case OptionParser.parse(args, strict: @install_switches) do
       {opts, [], []} ->
-        with {:ok, manifest_path} <- manifest_path_from_opts(opts),
-             :ok <- run_install(manifest_path, deps) do
-          :ok
+        case manifest_path_from_opts(opts) do
+          {:ok, manifest_path} -> run_install(manifest_path, deps)
+          {:error, _message} = error -> error
         end
 
       _ ->
         {:error, usage_message()}
+    end
+  end
+
+  defp evaluate_workflow_command(args, deps) do
+    case OptionParser.parse(args, strict: @switches) do
+      {opts, [], []} ->
+        evaluate_workflow_run(opts, Path.expand("WORKFLOW.md"), deps)
+
+      {opts, [workflow_path], []} ->
+        evaluate_workflow_run(opts, workflow_path, deps)
+
+      _ ->
+        {:error, usage_message()}
+    end
+  end
+
+  defp evaluate_workflow_run(opts, workflow_path, deps) do
+    with :ok <- require_guardrails_acknowledgement(opts),
+         :ok <- maybe_set_logs_root(opts, deps),
+         :ok <- maybe_set_server_port(opts, deps) do
+      run(workflow_path, deps)
     end
   end
 

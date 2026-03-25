@@ -1,5 +1,6 @@
 defmodule SymphonyElixir.TestSupport do
   @workflow_prompt "You are an agent for this repository."
+  alias SymphonyElixir.Installer.SessionState
 
   defmacro __using__(_opts) do
     quote do
@@ -136,7 +137,7 @@ defmodule SymphonyElixir.TestSupport do
 
   def read_installer_request!(repo_root) when is_binary(repo_root) do
     repo_root
-    |> SymphonyElixir.Installer.SessionState.paths()
+    |> SessionState.paths()
     |> Map.fetch!(:request)
     |> read_json_file!()
   end

@@ -37,17 +37,8 @@ defmodule SymphonyElixir.GitHub.Client do
     with :ok <- validate_tracker_config(tracker) do
       issue_ids
       |> Enum.uniq()
-      |> Enum.reduce_while({:ok, []}, fn issue_id, {:ok, acc} ->
-        case fetch_issue(issue_id) do
-          {:ok, %Issue{} = issue} -> {:cont, {:ok, [issue | acc]}}
-          {:ok, nil} -> {:cont, {:ok, acc}}
-          {:error, reason} -> {:halt, {:error, reason}}
-        end
-      end)
-      |> case do
-        {:ok, issues} -> {:ok, Enum.reverse(issues)}
-        {:error, reason} -> {:error, reason}
-      end
+      |> Enum.reduce_while({:ok, []}, &accumulate_issue_state/2)
+      |> finalize_issue_state_results()
     end
   end
 
@@ -88,6 +79,17 @@ defmodule SymphonyElixir.GitHub.Client do
       when is_map(issue) and is_map(tracker) do
     normalize_issue(issue, tracker, assignee_filter, Map.get(tracker, :project_slug) || Map.get(tracker, "project_slug"))
   end
+
+  defp accumulate_issue_state(issue_id, {:ok, acc}) do
+    case fetch_issue(issue_id) do
+      {:ok, %Issue{} = issue} -> {:cont, {:ok, [issue | acc]}}
+      {:ok, nil} -> {:cont, {:ok, acc}}
+      {:error, reason} -> {:halt, {:error, reason}}
+    end
+  end
+
+  defp finalize_issue_state_results({:ok, issues}), do: {:ok, Enum.reverse(issues)}
+  defp finalize_issue_state_results({:error, reason}), do: {:error, reason}
 
   @doc false
   @spec issue_update_payload_for_test(map(), String.t(), map()) :: {:ok, map()} | {:error, term()}
@@ -218,7 +220,6 @@ defmodule SymphonyElixir.GitHub.Client do
       nil -> {:ok, nil}
       "me" -> resolve_current_login()
       assignee when is_binary(assignee) -> {:ok, normalize_assignee(assignee)}
-      _ -> {:ok, nil}
     end
   end
 
@@ -232,42 +233,40 @@ defmodule SymphonyElixir.GitHub.Client do
 
   defp normalize_issue(issue, tracker, assignee_filter, project_slug)
        when is_map(issue) and is_binary(project_slug) do
-    cond do
-      Map.has_key?(issue, "pull_request") ->
+    if Map.has_key?(issue, "pull_request") do
+      nil
+    else
+      labels =
+        issue
+        |> Map.get("labels", [])
+        |> Enum.map(&normalize_label/1)
+        |> Enum.reject(&is_nil/1)
+
+      assignees = Map.get(issue, "assignees", [])
+
+      if assigned_to_worker?(assignees, assignee_filter) do
+        state_name = derive_issue_state(issue, tracker, labels)
+        number = Map.get(issue, "number")
+
+        %Issue{
+          id: compose_issue_id(project_slug, number),
+          identifier: compose_issue_id(project_slug, number),
+          title: Map.get(issue, "title"),
+          description: Map.get(issue, "body"),
+          priority: nil,
+          state: state_name,
+          branch_name: nil,
+          url: Map.get(issue, "html_url"),
+          assignee_id: primary_assignee(assignees),
+          blocked_by: [],
+          labels: labels,
+          assigned_to_worker: true,
+          created_at: parse_datetime(Map.get(issue, "created_at")),
+          updated_at: parse_datetime(Map.get(issue, "updated_at"))
+        }
+      else
         nil
-
-      true ->
-        labels =
-          issue
-          |> Map.get("labels", [])
-          |> Enum.map(&normalize_label/1)
-          |> Enum.reject(&is_nil/1)
-
-        assignees = Map.get(issue, "assignees", [])
-
-        if assigned_to_worker?(assignees, assignee_filter) do
-          state_name = derive_issue_state(issue, tracker, labels)
-          number = Map.get(issue, "number")
-
-          %Issue{
-            id: compose_issue_id(project_slug, number),
-            identifier: compose_issue_id(project_slug, number),
-            title: Map.get(issue, "title"),
-            description: Map.get(issue, "body"),
-            priority: nil,
-            state: state_name,
-            branch_name: nil,
-            url: Map.get(issue, "html_url"),
-            assignee_id: primary_assignee(assignees),
-            blocked_by: [],
-            labels: labels,
-            assigned_to_worker: true,
-            created_at: parse_datetime(Map.get(issue, "created_at")),
-            updated_at: parse_datetime(Map.get(issue, "updated_at"))
-          }
-        else
-          nil
-        end
+      end
     end
   end
 
@@ -353,7 +352,6 @@ defmodule SymphonyElixir.GitHub.Client do
   defp maybe_append_label(labels, nil), do: labels
   defp maybe_append_label(labels, label), do: labels ++ [label]
 
-  defp maybe_put(payload, _key, nil), do: payload
   defp maybe_put(payload, key, value), do: Map.put(payload, key, value)
 
   defp request(method, path, params)
@@ -427,10 +425,12 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp issue_path(issue_id) do
-    with {:ok, project_slug, number} <- parse_issue_id(issue_id) do
-      issue_by_repo_path(project_slug, number)
-    else
-      _ -> raise ArgumentError, "invalid_github_issue_id: #{inspect(issue_id)}"
+    case parse_issue_id(issue_id) do
+      {:ok, project_slug, number} ->
+        issue_by_repo_path(project_slug, number)
+
+      _ ->
+        raise ArgumentError, "invalid_github_issue_id: #{inspect(issue_id)}"
     end
   end
 

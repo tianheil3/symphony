@@ -372,8 +372,16 @@ defmodule SymphonyElixir.Config.Schema do
     tracker = %{
       settings.tracker
       | endpoint: resolve_tracker_endpoint(settings.tracker.endpoint, tracker_provider),
-        api_key: resolve_secret_setting(settings.tracker.api_key, tracker_env_value(tracker_provider, :api_key_env_var)),
-        assignee: resolve_secret_setting(settings.tracker.assignee, tracker_env_value(tracker_provider, :assignee_env_var))
+        api_key:
+          resolve_secret_setting(
+            settings.tracker.api_key,
+            tracker_env_value(tracker_provider, :api_key_env_var)
+          ),
+        assignee:
+          resolve_secret_setting(
+            settings.tracker.assignee,
+            tracker_env_value(tracker_provider, :assignee_env_var)
+          )
     }
 
     workspace = %{
@@ -389,6 +397,8 @@ defmodule SymphonyElixir.Config.Schema do
 
     %{settings | tracker: tracker, workspace: workspace, codex: codex}
   end
+
+  defp tracker_provider_for_kind(nil), do: SymphonyElixir.TrackerProviders.Linear
 
   defp tracker_provider_for_kind(kind) do
     case TrackerProviders.provider(kind) do

@@ -37,17 +37,8 @@ defmodule SymphonyElixir.GitLab.Client do
     with :ok <- validate_tracker_config(tracker) do
       issue_ids
       |> Enum.uniq()
-      |> Enum.reduce_while({:ok, []}, fn issue_id, {:ok, acc} ->
-        case fetch_issue(issue_id) do
-          {:ok, %Issue{} = issue} -> {:cont, {:ok, [issue | acc]}}
-          {:ok, nil} -> {:cont, {:ok, acc}}
-          {:error, reason} -> {:halt, {:error, reason}}
-        end
-      end)
-      |> case do
-        {:ok, issues} -> {:ok, Enum.reverse(issues)}
-        {:error, reason} -> {:error, reason}
-      end
+      |> Enum.reduce_while({:ok, []}, &accumulate_issue_state/2)
+      |> finalize_issue_state_results()
     end
   end
 
@@ -88,6 +79,17 @@ defmodule SymphonyElixir.GitLab.Client do
       when is_map(issue) and is_map(tracker) do
     normalize_issue(issue, tracker, assignee_filter)
   end
+
+  defp accumulate_issue_state(issue_id, {:ok, acc}) do
+    case fetch_issue(issue_id) do
+      {:ok, %Issue{} = issue} -> {:cont, {:ok, [issue | acc]}}
+      {:ok, nil} -> {:cont, {:ok, acc}}
+      {:error, reason} -> {:halt, {:error, reason}}
+    end
+  end
+
+  defp finalize_issue_state_results({:ok, issues}), do: {:ok, Enum.reverse(issues)}
+  defp finalize_issue_state_results({:error, reason}), do: {:error, reason}
 
   @doc false
   @spec issue_update_payload_for_test(map(), String.t(), map()) :: {:ok, map()} | {:error, term()}
@@ -182,39 +184,13 @@ defmodule SymphonyElixir.GitLab.Client do
 
   defp issue_update_payload(raw_issue, state_name, tracker) when is_map(raw_issue) do
     desired_state = normalize_state_name(state_name)
-    workflow_labels = workflow_label_set(tracker)
-
-    current_labels =
-      raw_issue
-      |> Map.get("labels", [])
-      |> Enum.filter(&is_binary/1)
-
-    workflow_labels_to_remove =
-      Enum.filter(current_labels, fn label ->
-        normalize_state_name(label) in workflow_labels
-      end)
-
-    add_label =
-      case desired_state do
-        "opened" -> nil
-        "closed" -> nil
-        _ -> state_name
-      end
-
-    state_event =
-      cond do
-        terminal_state_name?(state_name, tracker) -> "close"
-        active_state_name?(state_name, tracker) -> "reopen"
-        desired_state == "closed" -> "close"
-        desired_state == "opened" -> "reopen"
-        true -> nil
-      end
+    workflow_labels_to_remove = workflow_labels_to_remove(raw_issue, tracker)
 
     payload =
       %{}
-      |> maybe_put("add_labels", labels_payload(maybe_put_label([], add_label)))
+      |> maybe_put("add_labels", labels_payload(maybe_put_label([], add_label(desired_state, state_name))))
       |> maybe_put("remove_labels", labels_payload(workflow_labels_to_remove))
-      |> maybe_put("state_event", state_event)
+      |> maybe_put("state_event", state_event(state_name, desired_state, tracker))
 
     if map_size(payload) == 0 do
       {:error, :gitlab_issue_update_failed}
@@ -223,12 +199,35 @@ defmodule SymphonyElixir.GitLab.Client do
     end
   end
 
+  defp workflow_labels_to_remove(raw_issue, tracker) do
+    workflow_labels = workflow_label_set(tracker)
+
+    raw_issue
+    |> Map.get("labels", [])
+    |> Enum.filter(fn label ->
+      is_binary(label) and normalize_state_name(label) in workflow_labels
+    end)
+  end
+
+  defp add_label("opened", _state_name), do: nil
+  defp add_label("closed", _state_name), do: nil
+  defp add_label(_desired_state, state_name), do: state_name
+
+  defp state_event(state_name, desired_state, tracker) do
+    cond do
+      terminal_state_name?(state_name, tracker) -> "close"
+      active_state_name?(state_name, tracker) -> "reopen"
+      desired_state == "closed" -> "close"
+      desired_state == "opened" -> "reopen"
+      true -> nil
+    end
+  end
+
   defp assignee_filter do
     case Config.settings!().tracker.assignee do
       nil -> {:ok, nil}
       "me" -> resolve_current_username()
       assignee when is_binary(assignee) -> {:ok, normalize_assignee(assignee)}
-      _ -> {:ok, nil}
     end
   end
 
@@ -421,10 +420,12 @@ defmodule SymphonyElixir.GitLab.Client do
   end
 
   defp issue_path(issue_id) do
-    with {:ok, project_slug, iid} <- parse_issue_id(issue_id) do
-      issue_by_project_path(project_slug, iid)
-    else
-      _ -> raise ArgumentError, "invalid_gitlab_issue_id: #{inspect(issue_id)}"
+    case parse_issue_id(issue_id) do
+      {:ok, project_slug, iid} ->
+        issue_by_project_path(project_slug, iid)
+
+      _ ->
+        raise ArgumentError, "invalid_gitlab_issue_id: #{inspect(issue_id)}"
     end
   end
 

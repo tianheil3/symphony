@@ -36,9 +36,6 @@ defmodule SymphonyElixir.Installer do
 
       false ->
         {:error, {:manifest_decode_failed, manifest_path, :expected_map}}
-
-      {:ok, _decoded_non_map} ->
-        {:error, {:manifest_decode_failed, manifest_path, :expected_map}}
     end
   end
 
