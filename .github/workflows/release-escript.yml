@@ -67,18 +67,7 @@ jobs:
         working-directory: elixir
         run: |
           mix_version="$(
-            python3 - <<'PY'
-from pathlib import Path
-import re
-
-text = Path("mix.exs").read_text()
-match = re.search(r'version:\s*"([^"]+)"', text)
-
-if not match:
-    raise SystemExit("failed to parse version from mix.exs")
-
-print(match.group(1), end="")
-PY
+            grep -m1 -E 'version: "[^"]+"' mix.exs | sed -E 's/.*"([^"]+)".*/\1/'
           )"
           tag_version="${{ steps.release.outputs.version }}"
 
