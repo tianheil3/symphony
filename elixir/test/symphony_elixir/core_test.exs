@@ -1844,4 +1844,32 @@ defmodule SymphonyElixir.CoreTest do
       File.rm_rf(test_root)
     end
   end
+
+  test "installer manifest compatibility returns explicit stale installer blockers" do
+    assert {:ok, manifest} =
+             SymphonyElixir.Installer.Manifest.parse(%{
+               "schema_version" => 1,
+               "installer_version_range" => ">= 0.2.0",
+               "capabilities" => ["repo_first_bootstrap"],
+               "target_repo" => "/tmp/repo"
+             })
+
+    assert {:error, {:installer_upgrade_required, "0.1.0", ">= 0.2.0"}} =
+             SymphonyElixir.Installer.Manifest.ensure_compatible!(manifest, "0.1.0", [
+               "repo_first_bootstrap"
+             ])
+  end
+
+  test "installer session state paths stay repo-local under .symphony/install" do
+    repo_root = create_temp_dir!("symphony-elixir-installer-state")
+    on_exit(fn -> File.rm_rf(repo_root) end)
+
+    paths = SymphonyElixir.Installer.SessionState.paths(repo_root)
+
+    assert paths.dir == Path.join(Path.expand(repo_root), ".symphony/install")
+    assert paths.request == Path.join(paths.dir, "request.json")
+    assert paths.state == Path.join(paths.dir, "state.json")
+    assert paths.log == Path.join(paths.dir, "events.jsonl")
+    refute String.starts_with?(paths.dir, "~/.cache/symphony")
+  end
 end
