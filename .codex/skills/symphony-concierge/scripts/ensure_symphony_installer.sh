@@ -193,9 +193,20 @@ locate_extracted_binary() {
 
 verify_installer() {
   local installer_path="$1"
+  local output
+  local status
 
-  if ! "$installer_path" --help >/dev/null 2>&1; then
-    die "installer at $installer_path failed 'symphony --help'"
+  set +e
+  output="$("$installer_path" --help 2>&1)"
+  status=$?
+  set -e
+
+  if [ "$status" -ne 0 ] && [ "$status" -ne 1 ]; then
+    die "installer at $installer_path failed '--help' probe with exit status $status"
+  fi
+
+  if [[ "$output" != *"Usage:"* ]] || [[ "$output" != *"symphony install --manifest <path>"* ]]; then
+    die "installer at $installer_path failed usage contract probe"
   fi
 }
 
@@ -276,7 +287,7 @@ main() {
   asset_lines="$(list_release_assets "$release_json")"
 
   if ! selected_asset="$(find_best_asset "$os" "$arch" "$asset_lines")"; then
-    die "no matching release asset found in ${release_repo}@${release_tag} for ${os}/${arch}"
+    die "no matching release asset found in ${release_repo}@${release_tag} for ${os}/${arch} (v1 CI-published tuples: linux/x86_64, darwin/arm64)"
   fi
 
   IFS=$'\t' read -r asset_name asset_url <<<"$selected_asset"

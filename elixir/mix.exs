@@ -52,6 +52,10 @@ defmodule SymphonyElixir.MixProject do
     ]
   end
 
+  def cli do
+    [preferred_envs: preferred_cli_env()]
+  end
+
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
@@ -81,9 +85,21 @@ defmodule SymphonyElixir.MixProject do
 
   defp aliases do
     [
-      setup: ["deps.get"],
-      build: ["escript.build"],
-      lint: ["specs.check", "credo --strict"]
+      {:setup, ["deps.get"]},
+      {:build, ["escript.build"]},
+      {:lint, ["specs.check", "credo --strict"]},
+      {:"test.release",
+       [
+         "test test/symphony_elixir/cli_test.exs test/symphony_elixir/installer_descriptors_test.exs test/symphony_elixir/installer_manifest_test.exs test/symphony_elixir/installer_apply_test.exs test/symphony_elixir/installer_launch_verifier_test.exs"
+       ]},
+      {:"release.package", ["cmd ../scripts/build_release_artifacts.sh"]}
+    ]
+  end
+
+  defp preferred_cli_env do
+    [
+      "test.release": :test,
+      "release.package": :prod
     ]
   end
 

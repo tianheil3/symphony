@@ -79,6 +79,32 @@ it is missing.
 See [docs/installer.md](docs/installer.md) for the manifest model, session-state files, and
 concierge/installer handoff contract.
 
+## Installer release assets
+
+Version tags (`v*`) trigger `.github/workflows/release-escript.yml`, which:
+
+- enforces `vX.Y.Z` tag version == `mix.exs` project version,
+- runs focused installer tests,
+- builds release artifacts on pinned runners:
+  - `ubuntu-24.04` -> `linux/x86_64`
+  - `macos-14` -> `darwin/arm64`
+- publishes GitHub Release assets for:
+
+- `symphony-<version>-<os>-<arch>.tar.gz` (contains `symphony` installer binary)
+- `symphony-concierge-<version>.tar.gz` (contains `.codex/skills/symphony-concierge`)
+
+For v1, CI guarantees exactly these installer tuples: `linux/x86_64` and `darwin/arm64`.
+
+To build the same artifact format locally from the repository root:
+
+```bash
+bash scripts/build_release_artifacts.sh
+```
+
+Local packaging defaults to the host tuple (`uname` OS/arch). To enforce a specific tuple label,
+set `SYMPHONY_TARGET_OS` and `SYMPHONY_TARGET_ARCH`; the script fails if they do not match the
+actual runner tuple.
+
 ## Run
 
 ```bash
