@@ -1046,6 +1046,24 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert settings.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
   end
 
+  test "schema parse resolves tracker endpoint defaults for explicit blank and unknown tracker kinds" do
+    assert {:ok, settings} =
+             Schema.parse(%{
+               tracker: %{kind: "linear", endpoint: ""},
+               workspace: %{root: ""}
+             })
+
+    assert settings.tracker.endpoint == "https://api.linear.app/graphql"
+
+    assert {:ok, settings} =
+             Schema.parse(%{
+               tracker: %{kind: "unknown-tracker", endpoint: nil},
+               workspace: %{root: ""}
+             })
+
+    assert settings.tracker.endpoint == nil
+  end
+
   test "schema resolves sandbox policies from explicit and default workspaces" do
     explicit_policy = %{"type" => "workspaceWrite", "writableRoots" => ["/tmp/explicit"]}
 

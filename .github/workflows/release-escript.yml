@@ -1,0 +1,130 @@
+name: release-escript
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-artifacts:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            asset_os: linux
+            asset_arch: x86_64
+            include_concierge_asset: "true"
+          - runner: macos-14
+            asset_os: darwin
+            asset_arch: arm64
+            include_concierge_asset: "false"
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up mise tools
+        uses: jdx/mise-action@v3
+        with:
+          install: true
+          cache: true
+          working_directory: elixir
+
+      - name: Cache deps and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            elixir/deps
+            elixir/_build
+          key: ${{ runner.os }}-mix-${{ hashFiles('elixir/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
+
+      - name: Derive release version from tag
+        id: release
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if [[ "${tag}" != v* ]]; then
+            echo "expected v-prefixed tag, got: ${tag}" >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+          if [[ -z "${version}" ]]; then
+            echo "failed to derive version from tag: ${tag}" >&2
+            exit 1
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Enforce tag version matches mix.exs
+        working-directory: elixir
+        run: |
+          mix_version="$(
+            PATH="/opt/homebrew/bin:${PATH}" \
+            MIX_ENV=prod mix run --no-start -e 'IO.write(Mix.Project.config()[:version])'
+          )"
+          tag_version="${{ steps.release.outputs.version }}"
+
+          if [[ "${mix_version}" != "${tag_version}" ]]; then
+            echo "tag version (${tag_version}) does not match mix.exs version (${mix_version})" >&2
+            exit 1
+          fi
+
+      - name: Run focused release tests
+        working-directory: elixir
+        run: |
+          PATH="/opt/homebrew/bin:$PATH" mix setup
+          PATH="/opt/homebrew/bin:$PATH" mix test.release
+
+      - name: Build release artifacts
+        working-directory: elixir
+        env:
+          SYMPHONY_VERSION: ${{ steps.release.outputs.version }}
+          SYMPHONY_TARGET_OS: ${{ matrix.asset_os }}
+          SYMPHONY_TARGET_ARCH: ${{ matrix.asset_arch }}
+        run: PATH="/opt/homebrew/bin:$PATH" mix release.package
+
+      - name: Keep concierge bundle only once
+        if: matrix.include_concierge_asset != 'true'
+        run: rm -f dist/release/symphony-concierge-*.tar.gz
+
+      - name: Show release artifacts
+        run: ls -l dist/release
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ matrix.asset_os }}-${{ matrix.asset_arch }}
+          path: dist/release/*.tar.gz
+          if-no-files-found: error
+
+  publish-release:
+    needs: build-artifacts
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*
+          merge-multiple: true
+          path: dist/release
+
+      - name: Show merged release artifacts
+        run: ls -l dist/release
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/release/*.tar.gz
+          generate_release_notes: true

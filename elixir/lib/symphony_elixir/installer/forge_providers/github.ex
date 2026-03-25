@@ -1,7 +1,13 @@
-defmodule SymphonyElixir.Bootstrap.ForgeProviders.GitHub do
+defmodule SymphonyElixir.Installer.ForgeProviders.GitHub do
   @moduledoc false
 
-  @behaviour SymphonyElixir.Bootstrap.ForgeProvider
+  @behaviour SymphonyElixir.Installer.ForgeProvider
+
+  @impl true
+  def key, do: "github"
+
+  @impl true
+  def display_name, do: "GitHub"
 
   @impl true
   def automation_prompt(_provider), do: "Install GitHub PR workflow skills (`push` / `land`)?"
@@ -47,6 +53,9 @@ defmodule SymphonyElixir.Bootstrap.ForgeProviders.GitHub do
 
   @impl true
   def pr_template_supported?(_plan), do: true
+
+  @impl true
+  def supports_automated_pr_flow?, do: true
 
   defp skill_artifact(plan, name, content) do
     %{

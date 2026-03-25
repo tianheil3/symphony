@@ -4,6 +4,7 @@ defmodule SymphonyElixir.TrackerProvidersTest do
   alias SymphonyElixir.TrackerProviders
 
   test "provider lookup returns built-in providers" do
+    assert {:ok, SymphonyElixir.TrackerProviders.GitHub} = TrackerProviders.provider("github")
     assert {:ok, SymphonyElixir.TrackerProviders.Linear} = TrackerProviders.provider("linear")
     assert {:ok, SymphonyElixir.TrackerProviders.GitLab} = TrackerProviders.provider("gitlab")
     assert {:ok, SymphonyElixir.TrackerProviders.Memory} = TrackerProviders.provider("memory")
@@ -15,6 +16,6 @@ defmodule SymphonyElixir.TrackerProvidersTest do
   end
 
   test "supported_kinds exposes the current registry keys" do
-    assert Enum.sort(TrackerProviders.supported_kinds()) == ["gitlab", "linear", "memory"]
+    assert Enum.sort(TrackerProviders.supported_kinds()) == ["github", "gitlab", "linear", "memory"]
   end
 end

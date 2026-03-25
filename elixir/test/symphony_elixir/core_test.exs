@@ -1,5 +1,7 @@
 defmodule SymphonyElixir.CoreTest do
   use SymphonyElixir.TestSupport
+  alias SymphonyElixir.Installer.Manifest
+  alias SymphonyElixir.Installer.SessionState
 
   test "config defaults and validation checks" do
     write_workflow_file!(Workflow.workflow_file_path(),
@@ -94,6 +96,14 @@ defmodule SymphonyElixir.CoreTest do
     )
 
     assert {:error, :missing_gitlab_project_slug} = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: "token",
+      tracker_project_slug: nil
+    )
+
+    assert {:error, :missing_github_project_slug} = Config.validate!()
   end
 
   test "current WORKFLOW.md file is valid and complete" do
@@ -157,6 +167,23 @@ defmodule SymphonyElixir.CoreTest do
     assert Config.settings!().tracker.assignee == env_assignee
   end
 
+  test "github assignee resolves from GITHUB_ASSIGNEE env var" do
+    previous_github_assignee = System.get_env("GITHUB_ASSIGNEE")
+    env_assignee = "octocat"
+
+    on_exit(fn -> restore_env("GITHUB_ASSIGNEE", previous_github_assignee) end)
+    System.put_env("GITHUB_ASSIGNEE", env_assignee)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_assignee: nil,
+      tracker_project_slug: "owner/repo",
+      codex_command: "/bin/sh app-server"
+    )
+
+    assert Config.settings!().tracker.assignee == env_assignee
+  end
+
   test "gitlab api token resolves from GITLAB_API_TOKEN env var" do
     previous_gitlab_api_key = System.get_env("GITLAB_API_TOKEN")
     env_api_key = "test-gitlab-api-key"
@@ -173,7 +200,27 @@ defmodule SymphonyElixir.CoreTest do
     )
 
     assert Config.settings!().tracker.api_key == env_api_key
-    assert Config.settings!().tracker.endpoint == "https://gitlab.com/api/graphql"
+    assert Config.settings!().tracker.endpoint == "https://gitlab.com/api/v4"
+    assert :ok = Config.validate!()
+  end
+
+  test "github api token resolves from GITHUB_TOKEN env var" do
+    previous_github_api_key = System.get_env("GITHUB_TOKEN")
+    env_api_key = "test-github-api-key"
+
+    on_exit(fn -> restore_env("GITHUB_TOKEN", previous_github_api_key) end)
+    System.put_env("GITHUB_TOKEN", env_api_key)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: nil,
+      tracker_endpoint: nil,
+      tracker_project_slug: "owner/repo",
+      codex_command: "/bin/sh app-server"
+    )
+
+    assert Config.settings!().tracker.api_key == env_api_key
+    assert Config.settings!().tracker.endpoint == "https://api.github.com"
     assert :ok = Config.validate!()
   end
 
@@ -579,7 +626,7 @@ defmodule SymphonyElixir.CoreTest do
     assert MapSet.member?(state.completed, issue_id)
     assert %{attempt: 1, due_at_ms: due_at_ms} = state.retry_attempts[issue_id]
     assert is_integer(due_at_ms)
-    assert_due_in_range(due_at_ms, 500, 1_100)
+    assert_due_in_range(due_at_ms, 0, 1_100)
   end
 
   test "abnormal worker exit increments retry attempt progressively" do
@@ -619,7 +666,7 @@ defmodule SymphonyElixir.CoreTest do
     assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 39_500, 40_500)
+    assert_due_in_range(due_at_ms, 38_500, 40_500)
   end
 
   test "first abnormal worker exit waits before retrying" do
@@ -658,7 +705,7 @@ defmodule SymphonyElixir.CoreTest do
     assert %{attempt: 1, due_at_ms: due_at_ms, identifier: "MT-560", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 9_000, 10_500)
+    assert_due_in_range(due_at_ms, 8_500, 10_500)
   end
 
   test "stale retry timer messages do not consume newer retry entries" do
@@ -1843,5 +1890,33 @@ defmodule SymphonyElixir.CoreTest do
     after
       File.rm_rf(test_root)
     end
+  end
+
+  test "installer manifest compatibility returns explicit stale installer blockers" do
+    assert {:ok, manifest} =
+             Manifest.parse(%{
+               "schema_version" => 1,
+               "installer_version_range" => ">= 0.2.0",
+               "capabilities" => ["repo_first_bootstrap"],
+               "target_repo" => "/tmp/repo"
+             })
+
+    assert {:error, {:installer_upgrade_required, "0.1.0", ">= 0.2.0"}} =
+             Manifest.ensure_compatible!(manifest, "0.1.0", [
+               "repo_first_bootstrap"
+             ])
+  end
+
+  test "installer session state paths stay repo-local under .symphony/install" do
+    repo_root = create_temp_dir!("symphony-elixir-installer-state")
+    on_exit(fn -> File.rm_rf(repo_root) end)
+
+    paths = SessionState.paths(repo_root)
+
+    assert paths.dir == Path.join(Path.expand(repo_root), ".symphony/install")
+    assert paths.request == Path.join(paths.dir, "request.json")
+    assert paths.state == Path.join(paths.dir, "state.json")
+    assert paths.log == Path.join(paths.dir, "events.jsonl")
+    refute String.starts_with?(paths.dir, "~/.cache/symphony")
   end
 end

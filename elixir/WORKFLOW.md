@@ -1,4 +1,5 @@
 ---
+# `tracker.kind` also supports `gitlab` and `github`; this example workflow stays on Linear.
 tracker:
   kind: linear
   project_slug: "symphony-0c79b11b75ea"

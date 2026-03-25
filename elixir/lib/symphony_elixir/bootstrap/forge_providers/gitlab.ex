@@ -87,7 +87,7 @@ defmodule SymphonyElixir.Bootstrap.ForgeProviders.GitLab do
     #{validation_step}
     3. Push the branch to `origin`, using upstream tracking if needed.
     4. If the push is rejected because the branch is stale, use the `pull` skill and push again.
-    5. Ensure an MR exists for the branch with a clear title that reflects the shipped outcome.
+    5. Ensure an MR exists for the branch with `glab mr create` or update the existing MR with `glab mr update`.
     6. Write a concise MR description that covers context, summary, acceptance criteria, and test plan.
     7. Reply with the MR URL after publish succeeds.
     """

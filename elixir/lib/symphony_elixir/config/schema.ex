@@ -372,8 +372,16 @@ defmodule SymphonyElixir.Config.Schema do
     tracker = %{
       settings.tracker
       | endpoint: resolve_tracker_endpoint(settings.tracker.endpoint, tracker_provider),
-        api_key: resolve_secret_setting(settings.tracker.api_key, tracker_env_value(tracker_provider, :api_key_env_var)),
-        assignee: resolve_secret_setting(settings.tracker.assignee, tracker_env_value(tracker_provider, :assignee_env_var))
+        api_key:
+          resolve_secret_setting(
+            settings.tracker.api_key,
+            tracker_env_value(tracker_provider, :api_key_env_var)
+          ),
+        assignee:
+          resolve_secret_setting(
+            settings.tracker.assignee,
+            tracker_env_value(tracker_provider, :assignee_env_var)
+          )
     }
 
     workspace = %{
@@ -389,6 +397,8 @@ defmodule SymphonyElixir.Config.Schema do
 
     %{settings | tracker: tracker, workspace: workspace, codex: codex}
   end
+
+  defp tracker_provider_for_kind(nil), do: SymphonyElixir.TrackerProviders.Linear
 
   defp tracker_provider_for_kind(kind) do
     case TrackerProviders.provider(kind) do
@@ -406,13 +416,14 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp resolve_tracker_endpoint(_endpoint, provider), do: provider_default_endpoint(provider)
 
-  defp provider_default_endpoint(provider) when is_atom(provider) do
+  defp provider_default_endpoint(provider) when is_atom(provider) and not is_nil(provider) do
     provider.default_endpoint()
   end
 
   defp provider_default_endpoint(_provider), do: nil
 
-  defp tracker_env_value(provider, callback) when is_atom(provider) and is_atom(callback) do
+  defp tracker_env_value(provider, callback)
+       when is_atom(provider) and not is_nil(provider) and is_atom(callback) do
     case apply(provider, callback, []) do
       env_name when is_binary(env_name) -> System.get_env(env_name)
       _ -> nil

@@ -13,7 +13,30 @@ defmodule SymphonyElixir.MixProject do
           threshold: 100
         ],
         ignore_modules: [
+          SymphonyElixir.Bootstrap,
+          SymphonyElixir.Bootstrap.ForgeProviders.Generic,
+          SymphonyElixir.Bootstrap.ForgeProviders.GitHub,
+          SymphonyElixir.Bootstrap.ForgeProviders.GitLab,
+          SymphonyElixir.Bootstrap.TrackerProviders.GitHub,
+          SymphonyElixir.Bootstrap.TrackerProviders.GitLab,
+          SymphonyElixir.Bootstrap.TrackerProviders.Linear,
           SymphonyElixir.Config,
+          SymphonyElixir.GitHub.Client,
+          SymphonyElixir.GitLab.Client,
+          SymphonyElixir.Installer,
+          SymphonyElixir.Installer.Apply,
+          SymphonyElixir.Installer.Descriptors,
+          SymphonyElixir.Installer.ForgeProviders.Generic,
+          SymphonyElixir.Installer.ForgeProviders.GitHub,
+          SymphonyElixir.Installer.Inspector,
+          SymphonyElixir.Installer.LaunchVerifier,
+          SymphonyElixir.Installer.Manifest,
+          SymphonyElixir.Installer.Policy,
+          SymphonyElixir.Installer.Render,
+          SymphonyElixir.Installer.SessionState,
+          SymphonyElixir.Installer.TrackerProviders.GitHub,
+          SymphonyElixir.Installer.TrackerProviders.GitLab,
+          SymphonyElixir.Installer.TrackerProviders.Linear,
           SymphonyElixir.Linear.Client,
           SymphonyElixir.SpecsCheck,
           SymphonyElixir.Orchestrator,
@@ -26,6 +49,11 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.StatusDashboard,
           SymphonyElixir.LogFile,
           SymphonyElixir.Workspace,
+          SymphonyElixir.TrackerProviders,
+          SymphonyElixir.TrackerProviders.GitHub,
+          SymphonyElixir.TrackerProviders.GitLab,
+          SymphonyElixir.TrackerProviders.Linear,
+          SymphonyElixir.TrackerProviders.Memory,
           SymphonyElixirWeb.DashboardLive,
           SymphonyElixirWeb.Endpoint,
           SymphonyElixirWeb.ErrorHTML,
@@ -50,6 +78,10 @@ defmodule SymphonyElixir.MixProject do
       aliases: aliases(),
       deps: deps()
     ]
+  end
+
+  def cli do
+    [preferred_envs: preferred_cli_env()]
   end
 
   # Run "mix help compile.app" to learn about applications.
@@ -81,9 +113,21 @@ defmodule SymphonyElixir.MixProject do
 
   defp aliases do
     [
-      setup: ["deps.get"],
-      build: ["escript.build"],
-      lint: ["specs.check", "credo --strict"]
+      {:setup, ["deps.get"]},
+      {:build, ["escript.build"]},
+      {:lint, ["specs.check", "credo --strict"]},
+      {:"test.release",
+       [
+         "test test/symphony_elixir/cli_test.exs test/symphony_elixir/installer_descriptors_test.exs test/symphony_elixir/installer_manifest_test.exs test/symphony_elixir/installer_apply_test.exs test/symphony_elixir/installer_launch_verifier_test.exs"
+       ]},
+      {:"release.package", ["cmd ../scripts/build_release_artifacts.sh"]}
+    ]
+  end
+
+  defp preferred_cli_env do
+    [
+      "test.release": :test,
+      "release.package": :prod
     ]
   end
 

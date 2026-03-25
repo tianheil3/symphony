@@ -2,6 +2,7 @@ defmodule SymphonyElixir.TrackerProviders do
   @moduledoc false
 
   @providers %{
+    "github" => SymphonyElixir.TrackerProviders.GitHub,
     "linear" => SymphonyElixir.TrackerProviders.Linear,
     "gitlab" => SymphonyElixir.TrackerProviders.GitLab,
     "memory" => SymphonyElixir.TrackerProviders.Memory

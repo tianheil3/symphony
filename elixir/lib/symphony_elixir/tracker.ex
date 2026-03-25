@@ -38,8 +38,10 @@ defmodule SymphonyElixir.Tracker do
 
   @spec adapter() :: module()
   def adapter do
-    Config.settings!().tracker.kind
-    |> TrackerProviders.provider_module!()
-    |> apply(:adapter_module, [])
+    provider_module =
+      Config.settings!().tracker.kind
+      |> TrackerProviders.provider_module!()
+
+    provider_module.adapter_module()
   end
 end

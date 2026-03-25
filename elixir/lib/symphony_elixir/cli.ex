@@ -7,11 +7,13 @@ defmodule SymphonyElixir.CLI do
 
   @acknowledgement_switch :i_understand_that_this_will_be_running_without_the_usual_guardrails
   @switches [{@acknowledgement_switch, :boolean}, logs_root: :string, port: :integer]
+  @install_switches [manifest: :string]
 
   @type ensure_started_result :: {:ok, [atom()]} | {:error, term()}
   @type deps :: %{
           file_regular?: (String.t() -> boolean()),
           run_bootstrap: (String.t() -> :ok | {:error, String.t()}),
+          run_install: (String.t() -> :ok | {:error, term()}),
           set_workflow_file_path: (String.t() -> :ok | {:error, term()}),
           set_logs_root: (String.t() -> :ok | {:error, term()}),
           set_server_port_override: (non_neg_integer() | nil -> :ok | {:error, term()}),
@@ -22,7 +24,7 @@ defmodule SymphonyElixir.CLI do
   def main(args) do
     case evaluate(args) do
       :ok ->
-        if bootstrap_command?(args) do
+        if one_shot_command?(args) do
           System.halt(0)
         else
           wait_for_shutdown()
@@ -40,25 +42,11 @@ defmodule SymphonyElixir.CLI do
       [command | rest] when command in ["bootstrap", "init"] ->
         evaluate_bootstrap(rest, deps)
 
+      ["install" | rest] ->
+        evaluate_install(rest, deps)
+
       _ ->
-        case OptionParser.parse(args, strict: @switches) do
-          {opts, [], []} ->
-            with :ok <- require_guardrails_acknowledgement(opts),
-                 :ok <- maybe_set_logs_root(opts, deps),
-                 :ok <- maybe_set_server_port(opts, deps) do
-              run(Path.expand("WORKFLOW.md"), deps)
-            end
-
-          {opts, [workflow_path], []} ->
-            with :ok <- require_guardrails_acknowledgement(opts),
-                 :ok <- maybe_set_logs_root(opts, deps),
-                 :ok <- maybe_set_server_port(opts, deps) do
-              run(workflow_path, deps)
-            end
-
-          _ ->
-            {:error, usage_message()}
-        end
+        evaluate_workflow_command(args, deps)
     end
   end
 
@@ -86,6 +74,7 @@ defmodule SymphonyElixir.CLI do
     [
       "Usage:",
       "  symphony [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]",
+      "  symphony install --manifest <path>",
       "  symphony bootstrap [target-repo-root]",
       "  symphony init [target-repo-root]"
     ]
@@ -97,6 +86,7 @@ defmodule SymphonyElixir.CLI do
     %{
       file_regular?: &File.regular?/1,
       run_bootstrap: &SymphonyElixir.Bootstrap.run/1,
+      run_install: &SymphonyElixir.Installer.install/1,
       set_workflow_file_path: &SymphonyElixir.Workflow.set_workflow_file_path/1,
       set_logs_root: &set_logs_root/1,
       set_server_port_override: &set_server_port_override/1,
@@ -107,6 +97,69 @@ defmodule SymphonyElixir.CLI do
   defp evaluate_bootstrap([], deps), do: deps.run_bootstrap.(Path.expand("."))
   defp evaluate_bootstrap([target_root], deps), do: deps.run_bootstrap.(Path.expand(target_root))
   defp evaluate_bootstrap(_args, _deps), do: {:error, usage_message()}
+
+  defp evaluate_install(args, deps) do
+    case OptionParser.parse(args, strict: @install_switches) do
+      {opts, [], []} ->
+        case manifest_path_from_opts(opts) do
+          {:ok, manifest_path} -> run_install(manifest_path, deps)
+          {:error, _message} = error -> error
+        end
+
+      _ ->
+        {:error, usage_message()}
+    end
+  end
+
+  defp evaluate_workflow_command(args, deps) do
+    case OptionParser.parse(args, strict: @switches) do
+      {opts, [], []} ->
+        evaluate_workflow_run(opts, Path.expand("WORKFLOW.md"), deps)
+
+      {opts, [workflow_path], []} ->
+        evaluate_workflow_run(opts, workflow_path, deps)
+
+      _ ->
+        {:error, usage_message()}
+    end
+  end
+
+  defp evaluate_workflow_run(opts, workflow_path, deps) do
+    with :ok <- require_guardrails_acknowledgement(opts),
+         :ok <- maybe_set_logs_root(opts, deps),
+         :ok <- maybe_set_server_port(opts, deps) do
+      run(workflow_path, deps)
+    end
+  end
+
+  defp manifest_path_from_opts(opts) do
+    case Keyword.get_values(opts, :manifest) do
+      [] ->
+        {:error, usage_message()}
+
+      values ->
+        manifest_path = values |> List.last() |> String.trim()
+
+        if manifest_path == "" do
+          {:error, usage_message()}
+        else
+          {:ok, Path.expand(manifest_path)}
+        end
+    end
+  end
+
+  defp run_install(manifest_path, deps) do
+    case deps.run_install.(manifest_path) do
+      :ok ->
+        :ok
+
+      {:error, message} when is_binary(message) ->
+        {:error, message}
+
+      {:error, reason} ->
+        {:error, "Installer apply failed for manifest #{manifest_path}: #{inspect(reason)}"}
+    end
+  end
 
   defp maybe_set_logs_root(opts, deps) do
     case Keyword.get_values(opts, :logs_root) do
@@ -191,9 +244,9 @@ defmodule SymphonyElixir.CLI do
     :ok
   end
 
-  defp bootstrap_command?(args) when is_list(args) do
+  defp one_shot_command?(args) when is_list(args) do
     case args do
-      [command | _rest] -> command in ["bootstrap", "init"]
+      [command | _rest] -> command in ["bootstrap", "init", "install"]
       _ -> false
     end
   end
