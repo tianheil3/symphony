@@ -188,4 +188,41 @@ defmodule SymphonyElixir.CLITest do
     assert :ok = CLI.evaluate(["init", target_root], deps)
     assert_received {:bootstrap_path, ^expected_path}
   end
+
+  test "install command forwards manifest path to installer" do
+    parent = self()
+    manifest_path = "tmp/install/request.json"
+    expanded_path = Path.expand(manifest_path)
+
+    deps = %{
+      file_regular?: fn _path -> flunk("workflow checks should not run for install") end,
+      run_bootstrap: fn _path -> flunk("bootstrap should not run for install") end,
+      run_install: fn path ->
+        send(parent, {:install_manifest_path, path})
+        :ok
+      end,
+      set_workflow_file_path: fn _path -> flunk("workflow should not be set for install") end,
+      set_logs_root: fn _path -> flunk("logs root should not be set for install") end,
+      set_server_port_override: fn _port -> flunk("port should not be set for install") end,
+      ensure_all_started: fn -> flunk("app startup should not run for install") end
+    }
+
+    assert :ok = CLI.evaluate(["install", "--manifest", manifest_path], deps)
+    assert_received {:install_manifest_path, ^expanded_path}
+  end
+
+  test "install command requires --manifest <path>" do
+    deps = %{
+      file_regular?: fn _path -> flunk("workflow checks should not run for install validation") end,
+      run_bootstrap: fn _path -> flunk("bootstrap should not run for install validation") end,
+      run_install: fn _path -> flunk("installer should not run with invalid install args") end,
+      set_workflow_file_path: fn _path -> flunk("workflow should not be set for install validation") end,
+      set_logs_root: fn _path -> flunk("logs root should not be set for install validation") end,
+      set_server_port_override: fn _port -> flunk("port should not be set for install validation") end,
+      ensure_all_started: fn -> flunk("app startup should not run for install validation") end
+    }
+
+    assert {:error, message} = CLI.evaluate(["install"], deps)
+    assert message =~ "Usage:"
+  end
 end
