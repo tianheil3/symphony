@@ -406,13 +406,14 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp resolve_tracker_endpoint(_endpoint, provider), do: provider_default_endpoint(provider)
 
-  defp provider_default_endpoint(provider) when is_atom(provider) do
+  defp provider_default_endpoint(provider) when is_atom(provider) and not is_nil(provider) do
     provider.default_endpoint()
   end
 
   defp provider_default_endpoint(_provider), do: nil
 
-  defp tracker_env_value(provider, callback) when is_atom(provider) and is_atom(callback) do
+  defp tracker_env_value(provider, callback)
+       when is_atom(provider) and not is_nil(provider) and is_atom(callback) do
     case apply(provider, callback, []) do
       env_name when is_binary(env_name) -> System.get_env(env_name)
       _ -> nil

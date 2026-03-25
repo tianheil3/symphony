@@ -94,6 +94,14 @@ defmodule SymphonyElixir.CoreTest do
     )
 
     assert {:error, :missing_gitlab_project_slug} = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: "token",
+      tracker_project_slug: nil
+    )
+
+    assert {:error, :missing_github_project_slug} = Config.validate!()
   end
 
   test "current WORKFLOW.md file is valid and complete" do
@@ -157,6 +165,23 @@ defmodule SymphonyElixir.CoreTest do
     assert Config.settings!().tracker.assignee == env_assignee
   end
 
+  test "github assignee resolves from GITHUB_ASSIGNEE env var" do
+    previous_github_assignee = System.get_env("GITHUB_ASSIGNEE")
+    env_assignee = "octocat"
+
+    on_exit(fn -> restore_env("GITHUB_ASSIGNEE", previous_github_assignee) end)
+    System.put_env("GITHUB_ASSIGNEE", env_assignee)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_assignee: nil,
+      tracker_project_slug: "owner/repo",
+      codex_command: "/bin/sh app-server"
+    )
+
+    assert Config.settings!().tracker.assignee == env_assignee
+  end
+
   test "gitlab api token resolves from GITLAB_API_TOKEN env var" do
     previous_gitlab_api_key = System.get_env("GITLAB_API_TOKEN")
     env_api_key = "test-gitlab-api-key"
@@ -173,7 +198,27 @@ defmodule SymphonyElixir.CoreTest do
     )
 
     assert Config.settings!().tracker.api_key == env_api_key
-    assert Config.settings!().tracker.endpoint == "https://gitlab.com/api/graphql"
+    assert Config.settings!().tracker.endpoint == "https://gitlab.com/api/v4"
+    assert :ok = Config.validate!()
+  end
+
+  test "github api token resolves from GITHUB_TOKEN env var" do
+    previous_github_api_key = System.get_env("GITHUB_TOKEN")
+    env_api_key = "test-github-api-key"
+
+    on_exit(fn -> restore_env("GITHUB_TOKEN", previous_github_api_key) end)
+    System.put_env("GITHUB_TOKEN", env_api_key)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: nil,
+      tracker_endpoint: nil,
+      tracker_project_slug: "owner/repo",
+      codex_command: "/bin/sh app-server"
+    )
+
+    assert Config.settings!().tracker.api_key == env_api_key
+    assert Config.settings!().tracker.endpoint == "https://api.github.com"
     assert :ok = Config.validate!()
   end
 

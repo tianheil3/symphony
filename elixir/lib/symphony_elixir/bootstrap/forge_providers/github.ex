@@ -89,7 +89,7 @@ defmodule SymphonyElixir.Bootstrap.ForgeProviders.GitHub do
     #{validation_step}
     3. Push the branch to `origin`, using upstream tracking if needed.
     4. If the push is rejected because the branch is stale, use the `pull` skill and push again.
-    5. Ensure a PR exists for the branch with a clear title that reflects the shipped outcome.
+    5. Ensure a PR exists for the branch with `gh pr create` or update the existing PR with `gh pr edit`.
     #{pr_body_step}
     7. Reply with the PR URL after publish succeeds.
     """
