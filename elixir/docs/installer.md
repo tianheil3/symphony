@@ -2,6 +2,29 @@
 
 This document defines the installer-facing contract introduced for repo-first bootstrap flows.
 
+## Repo-First Concierge Flow
+
+The repo-first path is designed around a global `symphony-concierge` skill bundle:
+
+1. Concierge scans the current repository once and caches discovery results.
+2. Concierge asks setup questions in one batch (no hidden re-scan after each answer).
+3. Concierge writes `.symphony/install/request.json`.
+4. Concierge runs:
+
+```bash
+symphony install --manifest .symphony/install/request.json
+```
+
+5. Installer/apply phase: installer writes/updates repo-local state in `.symphony/install/`.
+6. Post-install launch verification phase: concierge selects a free local port, runs Symphony from
+   the target repo root with
+   `--i-understand-that-this-will-be-running-without-the-usual-guardrails --port <selected_port> ./WORKFLOW.md`,
+   and requires both:
+   - a live spawned process
+   - a successful API health response at `http://127.0.0.1:<selected_port>/api/v1/state`
+   Dashboard reachability at `http://127.0.0.1:<selected_port>/` is recorded as additional signal.
+7. Concierge reports either verified launch success or a precise blocker from either phase.
+
 ## Manifest Schema
 
 `SymphonyElixir.Installer.Manifest.parse/1` accepts a manifest map and normalizes it into a typed
@@ -54,3 +77,16 @@ ownership boundaries.
 
 `SessionState.paths/1` always resolves these files beneath the target repo root. Machine-local cache
 state remains outside the repo and is modeled through the policy `machine_state` section.
+
+## Installer Acquisition Helper
+
+The concierge bundle ships `scripts/ensure_symphony_installer.sh` to guarantee `symphony` is
+available before invoking `symphony install --manifest ...`.
+
+Behavior:
+
+- If `symphony` already exists on `PATH`, it is reused after a `symphony --help` sanity check.
+- Otherwise, the helper downloads a matching release asset from GitHub Releases and installs it to
+  `~/.local/bin` (or `SYMPHONY_INSTALL_DIR` when set).
+- The helper supports `darwin`/`linux` and `x86_64`/`arm64`.
+- If no suitable release asset is found, the script exits with an explicit blocker.

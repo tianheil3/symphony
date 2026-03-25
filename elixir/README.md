@@ -13,7 +13,7 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
 
 ## How it works
 
-1. Polls Linear for candidate work
+1. Polls the configured tracker for candidate work
 2. Creates a workspace per issue
 3. Launches Codex in [App Server mode](https://developers.openai.com/codex/app-server/) inside the
    workspace
@@ -21,7 +21,7 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
 5. Keeps Codex working on the issue until the work is done
 
 During app-server sessions, Symphony also serves a client-side `linear_graphql` tool so that repo
-skills can make raw Linear GraphQL calls.
+skills can make raw Linear GraphQL calls when using Linear-backed workflows.
 
 If a claimed issue moves to a terminal state (`Done`, `Closed`, `Cancelled`, or `Duplicate`),
 Symphony stops the active agent for that issue and cleans up matching workspaces.
@@ -30,12 +30,16 @@ Symphony stops the active agent for that issue and cleans up matching workspaces
 
 1. Make sure your codebase is set up to work well with agents: see
    [Harness engineering](https://openai.com/index/harness-engineering/).
-2. Get a new personal token in Linear via Settings → Security & access → Personal API keys, and
-   set it as the `LINEAR_API_KEY` environment variable.
+2. Choose a tracker and export the corresponding API token:
+   - Linear: `LINEAR_API_KEY`
+   - GitLab: `GITLAB_API_TOKEN`
+   - GitHub Issues: `GITHUB_TOKEN`
 3. Copy this directory's `WORKFLOW.md` to your repo.
-4. Optionally copy the `commit`, `push`, `pull`, `land`, and `linear` skills to your repo.
+4. Optionally copy the `commit`, `push`, `pull`, `land`, and tracker-specific skills to your repo.
    - The `linear` skill expects Symphony's `linear_graphql` app-server tool for raw Linear GraphQL
      operations such as comment editing or upload flows.
+   - GitHub-backed workflows should use a `github` skill built on `gh`.
+   - GitLab-backed workflows should use a `gitlab` skill built on `glab`.
 5. Customize the copied `WORKFLOW.md` file for your project.
    - To get your project's slug, right-click the project and copy its URL. The slug is part of the
      URL.
@@ -52,6 +56,28 @@ We recommend using [mise](https://mise.jdx.dev/) to manage Elixir/Erlang version
 mise install
 mise exec -- elixir --version
 ```
+
+## Repo-first concierge path
+
+The fastest setup path is the global `symphony-concierge` skill bundle:
+
+1. Open your target GitHub repository in your coding agent.
+2. Invoke `symphony-concierge`.
+3. The skill performs one repo scan, asks setup questions, writes
+   `.symphony/install/request.json`, and runs:
+   - `symphony install --manifest .symphony/install/request.json`
+4. Installer/apply phase: the installer writes repo-local state under `.symphony/install/*`.
+5. Post-install launch verification phase: the skill starts Symphony from the repo root with
+   a selected free local port, requires both a live spawned process and API health response, and
+   records dashboard reachability as an additional signal before reporting completion.
+6. If either phase fails, the skill reports an explicit blocker.
+
+The same skill bundle includes `scripts/ensure_symphony_installer.sh`, which reuses an existing
+`symphony` binary when available or downloads a matching release asset from GitHub Releases when
+it is missing.
+
+See [docs/installer.md](docs/installer.md) for the manifest model, session-state files, and
+concierge/installer handoff contract.
 
 ## Run
 
@@ -110,6 +136,9 @@ Title: {{ issue.title }} Body: {{ issue.description }}
 Notes:
 
 - If a value is missing, defaults are used.
+- Supported `tracker.kind` values: `linear`, `gitlab`, `github`.
+- For `tracker.kind: github`, set `tracker.project_slug` to `owner/repo`.
+- The GitHub tracker implementation uses GitHub Issues plus workflow labels for Symphony states; GitHub Projects v2 is not currently used as the tracker surface.
 - Safer Codex defaults are used when policy fields are omitted:
   - `codex.approval_policy` defaults to `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}`
   - `codex.thread_sandbox` defaults to `workspace-write`
@@ -128,6 +157,7 @@ Notes:
 - If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
   the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
 - `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
+- `tracker.api_key` also reads from `GITLAB_API_TOKEN` for `gitlab` and `GITHUB_TOKEN` for `github` when unset or expressed as the matching `$ENV_VAR`.
 - For path values, `~` is expanded to the home directory.
 - For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,
   while `codex.command` stays a shell command string and any `$VAR` expansion there happens in the
@@ -213,8 +243,11 @@ actively running subagents, which is very useful during development.
 
 ### What's the easiest way to set this up for my own codebase?
 
-Launch `codex` in your repo, give it the URL to the Symphony repo, and ask it to set things up for
-you.
+Use the `symphony-concierge` skill in your target repo. It asks setup questions, writes
+`.symphony/install/request.json`, runs `symphony install --manifest ...`, then launches Symphony on
+a selected free local port and verifies API health while the spawned process remains alive before
+declaring success. It also reports dashboard reachability as an additional signal. If setup cannot
+finish, it reports a precise blocker to fix.
 
 ## License
 
