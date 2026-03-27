@@ -22,6 +22,16 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert description =~ "Linear"
   end
 
+  test "tool_specs hides linear_graphql when tracker is github" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_endpoint: "https://api.github.com",
+      tracker_project_slug: "owner/repo"
+    )
+
+    assert [] == DynamicTool.tool_specs()
+  end
+
   test "unsupported tools return a failure payload with the supported tool list" do
     response = DynamicTool.execute("not_a_real_tool", %{})
 
@@ -40,6 +50,25 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
                "text" => response["output"]
              }
            ]
+  end
+
+  test "unsupported tools report an empty supported tool list when github tracker disables dynamic tools" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_endpoint: "https://api.github.com",
+      tracker_project_slug: "owner/repo"
+    )
+
+    response = DynamicTool.execute("not_a_real_tool", %{})
+
+    assert response["success"] == false
+
+    assert Jason.decode!(response["output"]) == %{
+             "error" => %{
+               "message" => ~s(Unsupported dynamic tool: "not_a_real_tool".),
+               "supportedTools" => []
+             }
+           }
   end
 
   test "linear_graphql returns successful GraphQL responses as tool text" do

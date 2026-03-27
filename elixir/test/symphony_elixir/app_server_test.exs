@@ -561,6 +561,93 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
+  test "app server does not advertise linear dynamic tools when tracker is github" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-github-dynamic-tools-#{System.unique_integer([:positive])}"
+      )
+    try do
+      File.mkdir_p!(test_root)
+      workspace_root = Path.join(test_root, "workspaces")
+      File.mkdir_p!(workspace_root)
+      workspace = Path.join(workspace_root, "issue-90")
+      File.mkdir_p!(workspace)
+
+      trace_file = Path.join(test_root, "codex-trace.log")
+      codex_binary = Path.join(test_root, "codex")
+
+      File.write!(codex_binary, """
+      #!/usr/bin/env bash
+      set -euo pipefail
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "#{trace_file}"
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-gh-90"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-gh-90"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        tracker_kind: "github",
+        tracker_endpoint: "https://api.github.com",
+        tracker_project_slug: "owner/repo",
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server",
+        codex_approval_policy: "never"
+      )
+
+      issue = %Issue{
+        id: "issue-github-dynamic-tools",
+        identifier: "GH-90",
+        title: "GitHub tracker should not expose linear dynamic tool",
+        description: "Ensure GitHub tracker sessions do not advertise linear_graphql",
+        state: "Todo",
+        url: "https://example.org/issues/GH-90",
+        labels: ["Todo"]
+      }
+
+      assert {:ok, _result} = AppServer.run(workspace, "Avoid linear tool injection", issue)
+
+      trace = File.read!(trace_file)
+      lines = String.split(trace, "\n", trim: true)
+
+      assert Enum.any?(lines, fn line ->
+               if String.starts_with?(line, "JSON:") do
+                 payload =
+                   line
+                   |> String.trim_leading("JSON:")
+                   |> Jason.decode!()
+
+                 payload["id"] == 2 and get_in(payload, ["params", "dynamicTools"]) == []
+               else
+                 false
+               end
+             end)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "app server sends a generic non-interactive answer for freeform tool input prompts" do
     test_root =
       Path.join(
