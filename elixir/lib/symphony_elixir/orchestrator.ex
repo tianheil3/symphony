@@ -336,6 +336,12 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @doc false
+  @spec sync_issue_writeback_for_dispatch_for_test(Issue.t()) :: Issue.t()
+  def sync_issue_writeback_for_dispatch_for_test(%Issue{} = issue) do
+    sync_issue_writeback_for_dispatch(issue)
+  end
+
+  @doc false
   @spec select_worker_host_for_test(term(), String.t() | nil) :: String.t() | nil | :no_worker_capacity
   def select_worker_host_for_test(%State{} = state, preferred_worker_host) do
     select_worker_host(state, preferred_worker_host)
@@ -706,6 +712,7 @@ defmodule SymphonyElixir.Orchestrator do
         ref = Process.monitor(pid)
 
         Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
+        issue = sync_issue_writeback_for_dispatch(issue)
 
         running =
           Map.put(state.running, issue.id, %{
@@ -747,7 +754,108 @@ defmodule SymphonyElixir.Orchestrator do
           error: "failed to spawn agent: #{inspect(reason)}",
           worker_host: worker_host
         })
+      end
+  end
+
+  defp sync_issue_writeback_for_dispatch(%Issue{} = issue) do
+    if github_tracker_dispatch_writeback_enabled?() do
+      {issue_for_dispatch, transition_note} = maybe_transition_issue_to_dispatch_state(issue)
+      maybe_create_dispatch_comment(issue_for_dispatch, transition_note)
+      issue_for_dispatch
+    else
+      issue
     end
+  end
+
+  defp github_tracker_dispatch_writeback_enabled? do
+    case Config.settings!().tracker.kind do
+      "github" -> true
+      :github -> true
+      _ -> false
+    end
+  end
+
+  defp maybe_transition_issue_to_dispatch_state(%Issue{} = issue) do
+    original_state = issue.state
+
+    if normalize_issue_state(original_state) == "todo" do
+      case dispatch_progress_state_name() do
+        nil ->
+          {issue, {:unchanged, original_state}}
+
+        next_state ->
+          case Tracker.update_issue_state(issue.id, next_state) do
+            :ok ->
+              {%{issue | state: next_state}, {:transitioned, original_state, next_state}}
+
+            {:error, reason} ->
+              Logger.warning("Failed to move issue to dispatch state for #{issue_context(issue)} target_state=#{inspect(next_state)} reason=#{inspect(reason)}")
+              {issue, {:transition_failed, original_state, next_state, reason}}
+          end
+      end
+    else
+      {issue, {:unchanged, original_state}}
+    end
+  end
+
+  defp dispatch_progress_state_name do
+    active_states =
+      Config.settings!().tracker.active_states
+      |> List.wrap()
+      |> Enum.filter(&is_binary/1)
+
+    with nil <- Enum.find(active_states, &(normalize_issue_state(&1) == "in progress")),
+         nil <- Enum.find(active_states, &(normalize_issue_state(&1) not in ["", "todo"])) do
+      nil
+    else
+      state_name -> state_name
+    end
+  end
+
+  defp maybe_create_dispatch_comment(%Issue{id: issue_id} = issue, transition_note)
+       when is_binary(issue_id) do
+    comment_body = dispatch_comment_body(transition_note)
+
+    case Tracker.create_comment(issue_id, comment_body) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Failed to create dispatch comment for #{issue_context(issue)}: #{inspect(reason)}")
+        :ok
+    end
+  end
+
+  defp maybe_create_dispatch_comment(_issue, _transition_note), do: :ok
+
+  defp dispatch_comment_body({:transitioned, from_state, to_state}) do
+    """
+    ## Codex Workpad
+
+    Symphony claimed this issue and moved it from `#{from_state}` to `#{to_state}`.
+    A Codex agent run is now active.
+    """
+    |> String.trim()
+  end
+
+  defp dispatch_comment_body({:transition_failed, from_state, to_state, _reason}) do
+    """
+    ## Codex Workpad
+
+    Symphony claimed this issue, but automatic state transition from `#{from_state}` to `#{to_state}` failed.
+    A Codex agent run is now active and will continue with the current tracker label.
+    """
+    |> String.trim()
+  end
+
+  defp dispatch_comment_body({:unchanged, state_name}) do
+    """
+    ## Codex Workpad
+
+    Symphony claimed this issue in state `#{state_name}`.
+    A Codex agent run is now active.
+    """
+    |> String.trim()
   end
 
   defp revalidate_issue_for_dispatch(%Issue{id: issue_id}, issue_fetcher, terminal_states)
