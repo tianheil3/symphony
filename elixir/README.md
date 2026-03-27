@@ -275,8 +275,9 @@ a selected free local port and verifies API health while the spawned process rem
 declaring success. It also reports dashboard reachability as an additional signal. For GitHub
 tracker setups, it must verify or create the default workflow-state labels `Todo`, `In Progress`,
 and `Done`, and it should tell the operator that new GitHub issues must carry an active-state label
-such as `Todo` before Symphony will pick them up. If setup cannot finish, it reports a precise
-blocker to fix.
+such as `Todo` before Symphony will pick them up. The generated `WORKFLOW.md` should also make
+GitHub comment/state handling explicit and forbid Linear-only closeout tools in GitHub mode. If
+setup cannot finish, it reports a precise blocker to fix.
 
 ## License
 

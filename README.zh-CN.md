@@ -101,6 +101,12 @@ GitHub 场景下，Symphony 默认不是只看 issue 是否 `open`，而是看 i
 labels。也就是说，一个新建但没有 `Todo` 之类 active-state label 的 GitHub issue，默认不会被
 Symphony 当成候选任务拉取。
 
+对于 GitHub tracker，生成出来的 `WORKFLOW.md` 还应该显式要求 agent：
+
+- 用 `gh issue comment` 维护持久 workpad comment
+- 用 `gh api` 改 workflow-state labels
+- 不要调用 `linear_graphql` 或任何 Linear-only 的 closeout 流程
+
 如果本机还没有 `symphony`，skill 自带的 helper 会尝试从本仓库的 GitHub Releases 下载对应平台的
 安装包。
 

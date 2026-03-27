@@ -96,6 +96,45 @@ Reference command shape:
 mkdir -p "$repo_root/.symphony/install"
 
 tmp_workflow="$(mktemp)"
+provider_prompt="$(cat <<EOF
+You are working on a ${tracker_provider} issue {{ issue.identifier }}.
+
+Title: {{ issue.title }}
+Current status: {{ issue.state }}
+Labels: {{ issue.labels }}
+Body: {{ issue.description }}
+
+Work only inside the Symphony-created issue workspace.
+Before handing off or concluding your turn, run ${validation_command:-"the configured validation command for the current scope"}.
+Use the tracker provider matching \`tracker.kind\` as the source of truth for comments and state transitions.
+EOF
+)"
+
+if [ "$tracker_provider" = "github" ]; then
+  provider_prompt="$(cat <<EOF
+You are working on a GitHub issue {{ issue.identifier }}.
+
+Repository: ${project_slug}
+Title: {{ issue.title }}
+Current status: {{ issue.state }}
+Labels: {{ issue.labels }}
+Body: {{ issue.description }}
+
+GitHub workflow rules:
+
+- Workflow-state labels are the source of truth for candidate issue pickup and progress.
+- Use \`gh issue comment\` for the persistent workpad comment.
+- Use \`gh api repos/<owner>/<repo>/issues/<number>\` for workflow-state label changes.
+- If the issue is labeled \`Todo\`, move it to \`In Progress\` before active implementation.
+- Move the issue to \`Done\` only after validation and final handoff are complete.
+- Never use Linear GraphQL, \`linear_graphql\`, or Linear-only closeout helpers when \`tracker.kind=github\`, even if those tools are available in the wider environment.
+
+Work only inside the Symphony-created issue workspace.
+Before handing off or concluding your turn, run ${validation_command:-"the configured validation command for the current scope"}.
+EOF
+)"
+fi
+
 cat >"$tmp_workflow" <<EOF
 ---
 tracker:
@@ -122,10 +161,7 @@ agent:
 codex:
   command: ${codex_command}
 ---
-You are working on a ${tracker_provider} issue {{ issue.identifier }}.
-
-Title: {{ issue.title }}
-Body: {{ issue.description }}
+${provider_prompt}
 EOF
 
 jq -n \
@@ -206,6 +242,7 @@ When `tracker_provider=github`, the concierge summary MUST also state:
 
 - workflow-state labels were verified or created
 - new GitHub issues must carry an active-state label such as `Todo` to be picked up by Symphony
+- the generated `WORKFLOW.md` explicitly routes issue comments and state transitions through GitHub tools, not Linear tools
 
 ## Step 6: Apply installer manifest
 

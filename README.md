@@ -103,6 +103,12 @@ GitHub issue pickup depends on those labels. A newly created GitHub issue that i
 but has no active-state label such as `Todo` will not be treated as candidate work by the default
 Symphony workflow.
 
+For GitHub tracker setups, the generated `WORKFLOW.md` should also explicitly instruct agents to:
+
+- use `gh issue comment` for the persistent workpad
+- use `gh api` for workflow-state label changes
+- avoid `linear_graphql` or other Linear-only closeout tools entirely
+
 If `symphony` is not already installed, the bundled helper will download a matching release asset
 from this repository's GitHub Releases.
 

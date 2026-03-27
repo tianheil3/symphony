@@ -25,7 +25,9 @@ symphony install --manifest .symphony/install/request.json
    Dashboard reachability at `http://127.0.0.1:<selected_port>/` is recorded as additional signal.
 7. For GitHub tracker setups, concierge verifies or creates the default workflow-state labels
    `Todo`, `In Progress`, and `Done`, and must explain that candidate issue pickup depends on those
-   labels rather than generic GitHub `open` state alone.
+   labels rather than generic GitHub `open` state alone. The generated `WORKFLOW.md` must also
+   route comments and status transitions through GitHub tools (`gh issue comment`, `gh api`) and
+   explicitly forbid Linear-only closeout tools in GitHub mode.
 8. Concierge reports either verified launch success or a precise blocker from either phase.
 
 ## Manifest Schema
