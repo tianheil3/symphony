@@ -102,6 +102,15 @@ tracker:
   kind: ${tracker_provider}
   api_key: \$${tracker_token_env}
   project_slug: ${project_slug}
+  active_states:
+    - Todo
+    - In Progress
+  terminal_states:
+    - Closed
+    - Cancelled
+    - Canceled
+    - Duplicate
+    - Done
 workspace:
   root: ${workspace_root}
 hooks:
@@ -148,7 +157,57 @@ rm -f "$tmp_workflow"
 
 If `jq` is unavailable, write equivalent JSON with another deterministic method.
 
-## Step 5: Apply installer manifest
+## Step 5: For GitHub tracker, ensure workflow-state labels exist
+
+GitHub candidate issues are driven by workflow-state labels, not by the repository's generic open/closed state alone. The concierge flow MUST make this explicit and MUST ensure the required labels exist before reporting setup success.
+
+Required labels for the default GitHub flow:
+
+- `Todo`
+- `In Progress`
+- `Done`
+
+Reference command shape:
+
+```bash
+if [ "$tracker_provider" = "github" ]; then
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "Blocked: GitHub tracker setup requires gh to create or verify workflow-state labels"
+    exit 1
+  fi
+
+  if ! gh auth status >/dev/null 2>&1; then
+    echo "Blocked: GitHub tracker setup requires gh auth to create or verify workflow-state labels"
+    exit 1
+  fi
+
+  for spec in \
+    "Todo:0E8A16:Ready for Symphony pickup" \
+    "In Progress:1D76DB:Actively being worked by Symphony" \
+    "Done:8250DF:Completed by Symphony"; do
+    label_name="${spec%%:*}"
+    rest="${spec#*:}"
+    label_color="${rest%%:*}"
+    label_desc="${rest#*:}"
+    gh label create "$label_name" --repo "$project_slug" --color "$label_color" --description "$label_desc" 2>/dev/null || true
+  done
+
+  existing_labels="$(gh label list --repo "$project_slug" --limit 200 --json name --jq '.[].name')"
+  for required_label in "Todo" "In Progress" "Done"; do
+    if ! printf '%s\n' "$existing_labels" | grep -Fx -- "$required_label" >/dev/null; then
+      echo "Blocked: required GitHub workflow-state label missing after setup: $required_label"
+      exit 1
+    fi
+  done
+fi
+```
+
+When `tracker_provider=github`, the concierge summary MUST also state:
+
+- workflow-state labels were verified or created
+- new GitHub issues must carry an active-state label such as `Todo` to be picked up by Symphony
+
+## Step 6: Apply installer manifest
 
 Run:
 
@@ -159,7 +218,7 @@ install_exit=${PIPESTATUS[0]}
 set -e
 ```
 
-## Step 6: Launch Symphony and verify reachability
+## Step 7: Launch Symphony and verify reachability
 
 Only continue when install succeeded:
 
@@ -220,7 +279,7 @@ PY
 fi
 ```
 
-## Step 7: Summarize success or blocker precisely
+## Step 8: Summarize success or blocker precisely
 
 When `install_exit == 0` and `launch_ok == "true"`:
 
@@ -237,6 +296,9 @@ When `install_exit == 0` and `launch_ok == "true"`:
   - dashboard URL (optional signal): `$dashboard_url`
   - dashboard probe status: `$dashboard_ok`
   - launch PID and `.symphony/install/launch.log` path
+- When `tracker_provider=github`, also confirm:
+  - workflow-state labels `Todo`, `In Progress`, and `Done` exist
+  - new GitHub issues must be created or updated with an active-state label such as `Todo` before Symphony will pick them up
 
 When `install_exit != 0`:
 

@@ -23,7 +23,10 @@ symphony install --manifest .symphony/install/request.json
    - a live spawned process
    - a successful API health response at `http://127.0.0.1:<selected_port>/api/v1/state`
    Dashboard reachability at `http://127.0.0.1:<selected_port>/` is recorded as additional signal.
-7. Concierge reports either verified launch success or a precise blocker from either phase.
+7. For GitHub tracker setups, concierge verifies or creates the default workflow-state labels
+   `Todo`, `In Progress`, and `Done`, and must explain that candidate issue pickup depends on those
+   labels rather than generic GitHub `open` state alone.
+8. Concierge reports either verified launch success or a precise blocker from either phase.
 
 ## Manifest Schema
 

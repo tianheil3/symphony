@@ -92,6 +92,17 @@ The concierge flow will:
 5. start Symphony on a selected local port,
 6. verify both process liveness and API health before reporting success.
 
+For GitHub tracker setups, the concierge flow must also verify or create the default workflow-state
+labels:
+
+- `Todo`
+- `In Progress`
+- `Done`
+
+GitHub issue pickup depends on those labels. A newly created GitHub issue that is merely `open`
+but has no active-state label such as `Todo` will not be treated as candidate work by the default
+Symphony workflow.
+
 If `symphony` is not already installed, the bundled helper will download a matching release asset
 from this repository's GitHub Releases.
 

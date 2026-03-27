@@ -272,8 +272,11 @@ actively running subagents, which is very useful during development.
 Use the `symphony-concierge` skill in your target repo. It asks setup questions, writes
 `.symphony/install/request.json`, runs `symphony install --manifest ...`, then launches Symphony on
 a selected free local port and verifies API health while the spawned process remains alive before
-declaring success. It also reports dashboard reachability as an additional signal. If setup cannot
-finish, it reports a precise blocker to fix.
+declaring success. It also reports dashboard reachability as an additional signal. For GitHub
+tracker setups, it must verify or create the default workflow-state labels `Todo`, `In Progress`,
+and `Done`, and it should tell the operator that new GitHub issues must carry an active-state label
+such as `Todo` before Symphony will pick them up. If setup cannot finish, it reports a precise
+blocker to fix.
 
 ## License
 
