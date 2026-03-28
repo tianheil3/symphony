@@ -8,6 +8,7 @@ defmodule SymphonyElixir.GitHub.Client do
   alias SymphonyElixir.{Config, Linear.Issue}
 
   @page_size 100
+  @workpad_heading "## Codex Workpad"
 
   @spec fetch_candidate_issues() :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_candidate_issues do
@@ -45,8 +46,7 @@ defmodule SymphonyElixir.GitHub.Client do
   @spec create_comment(String.t(), String.t()) :: :ok | {:error, term()}
   def create_comment(issue_id, body) when is_binary(issue_id) and is_binary(body) do
     with {:ok, project_slug, number} <- parse_issue_id(issue_id),
-         {:ok, response} <-
-           request(:post, issue_comments_path(project_slug, number), %{body: body}),
+         {:ok, response} <- create_or_update_comment(project_slug, number, body),
          %{"id" => _comment_id} <- response do
       :ok
     else
@@ -354,6 +354,64 @@ defmodule SymphonyElixir.GitHub.Client do
 
   defp maybe_put(payload, key, value), do: Map.put(payload, key, value)
 
+  defp create_or_update_comment(project_slug, number, body) do
+    if workpad_comment_body?(body) do
+      case find_existing_workpad_comment_id(project_slug, number) do
+        {:ok, comment_id} ->
+          request(:patch, issue_comment_path(project_slug, comment_id), %{body: body})
+
+        {:error, :github_workpad_comment_not_found} ->
+          request(:post, issue_comments_path(project_slug, number), %{body: body})
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    else
+      request(:post, issue_comments_path(project_slug, number), %{body: body})
+    end
+  end
+
+  defp find_existing_workpad_comment_id(project_slug, number) do
+    find_existing_workpad_comment_id(project_slug, number, 1)
+  end
+
+  defp find_existing_workpad_comment_id(project_slug, number, page) do
+    case request(:get, issue_comments_path(project_slug, number), %{per_page: @page_size, page: page}) do
+      {:ok, comments} when is_list(comments) ->
+        case Enum.find_value(comments, &workpad_comment_id/1) do
+          nil ->
+            if length(comments) < @page_size do
+              {:error, :github_workpad_comment_not_found}
+            else
+              find_existing_workpad_comment_id(project_slug, number, page + 1)
+            end
+
+          comment_id ->
+            {:ok, comment_id}
+        end
+
+      {:ok, _unexpected} ->
+        {:error, :github_unknown_payload}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp workpad_comment_id(%{"id" => comment_id, "body" => body}) do
+    if workpad_comment_body?(body), do: comment_id, else: nil
+  end
+
+  defp workpad_comment_id(_comment), do: nil
+
+  defp workpad_comment_body?(body) when is_binary(body) do
+    body
+    |> String.trim_leading()
+    |> String.starts_with?(@workpad_heading)
+  end
+
+  defp workpad_comment_body?(_body), do: false
+
   defp request(method, path, params)
        when method in [:get, :post, :patch] and is_binary(path) and is_map(params) do
     with {:ok, headers} <- request_headers(),
@@ -422,6 +480,12 @@ defmodule SymphonyElixir.GitHub.Client do
 
   defp issue_comments_path(project_slug, number) do
     issue_by_repo_path(project_slug, number) <> "/comments"
+  end
+
+  defp issue_comment_path(project_slug, comment_id) do
+    "/repos/" <>
+      repo_path_component(project_slug) <>
+      "/issues/comments/" <> to_string(comment_id)
   end
 
   defp issue_path(issue_id) do

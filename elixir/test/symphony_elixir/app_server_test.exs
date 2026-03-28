@@ -591,9 +591,11 @@ defmodule SymphonyElixir.AppServerTest do
             printf '%s\\n' '{"id":1,"result":{}}'
             ;;
           2)
-            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-gh-90"}}}'
             ;;
           3)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-gh-90"}}}'
+            ;;
+          4)
             printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-gh-90"}}}'
             printf '%s\\n' '{"method":"turn/completed"}'
             exit 0

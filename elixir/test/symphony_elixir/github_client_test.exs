@@ -193,4 +193,92 @@ defmodule SymphonyElixir.GitHubClientTest do
     assert {:ok, [issue]} = Client.fetch_issue_states_by_ids(["owner/repo#1", "owner/repo#2"])
     assert issue.id == "owner/repo#2"
   end
+
+  test "create_comment reuses an existing Codex Workpad comment" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_endpoint: nil,
+      tracker_api_token: "token",
+      tracker_project_slug: "owner/repo"
+    )
+
+    parent = self()
+
+    Application.put_env(:symphony_elixir, :github_request_fun, fn method, path, params, _headers ->
+      send(parent, {:github_request, method, path, params})
+
+      case {method, path} do
+        {:get, "/repos/owner/repo/issues/42/comments"} ->
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{"id" => 1001, "body" => "## Codex Workpad\n\nExisting body"},
+               %{"id" => 1002, "body" => "Unrelated note"}
+             ]
+           }}
+
+        {:patch, "/repos/owner/repo/issues/comments/1001"} ->
+          {:ok, %{status: 200, body: %{"id" => 1001, "body" => params["body"]}}}
+
+        {:post, "/repos/owner/repo/issues/42/comments"} ->
+          flunk("expected existing workpad comment to be updated, not recreated")
+
+        other ->
+          flunk("unexpected GitHub request: #{inspect(other)}")
+      end
+    end)
+
+    assert :ok =
+             Client.create_comment(
+               "owner/repo#42",
+               "## Codex Workpad\n\nSymphony claimed this issue in state `In Progress`."
+             )
+
+    assert_receive {:github_request, :get, "/repos/owner/repo/issues/42/comments",
+                    %{page: 1, per_page: 100}}
+
+    assert_receive {:github_request, :patch, "/repos/owner/repo/issues/comments/1001",
+                    %{body: "## Codex Workpad\n\nSymphony claimed this issue in state `In Progress`."}}
+
+    refute_receive {:github_request, :post, _, _}
+  end
+
+  test "create_comment creates a new GitHub comment when no workpad exists" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_endpoint: nil,
+      tracker_api_token: "token",
+      tracker_project_slug: "owner/repo"
+    )
+
+    parent = self()
+
+    Application.put_env(:symphony_elixir, :github_request_fun, fn method, path, params, _headers ->
+      send(parent, {:github_request, method, path, params})
+
+      case {method, path} do
+        {:get, "/repos/owner/repo/issues/42/comments"} ->
+          {:ok, %{status: 200, body: [%{"id" => 1002, "body" => "Unrelated note"}]}}
+
+        {:post, "/repos/owner/repo/issues/42/comments"} ->
+          {:ok, %{status: 201, body: %{"id" => 1003, "body" => params["body"]}}}
+
+        other ->
+          flunk("unexpected GitHub request: #{inspect(other)}")
+      end
+    end)
+
+    assert :ok =
+             Client.create_comment(
+               "owner/repo#42",
+               "## Codex Workpad\n\nSymphony claimed this issue in state `Todo`."
+             )
+
+    assert_receive {:github_request, :get, "/repos/owner/repo/issues/42/comments",
+                    %{page: 1, per_page: 100}}
+
+    assert_receive {:github_request, :post, "/repos/owner/repo/issues/42/comments",
+                    %{body: "## Codex Workpad\n\nSymphony claimed this issue in state `Todo`."}}
+  end
 end
