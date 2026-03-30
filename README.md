@@ -71,7 +71,16 @@ The main system pieces are:
 - `workspace`: where each task gets its own checkout and bootstrap commands.
 - `codex runtime`: the agent execution engine, typically `codex app-server`.
 - `workflow contract`: the YAML front matter and prompt body in `WORKFLOW.md`.
-- `observability`: the local dashboard and API used to inspect state and health.
+- `observability`: the local dashboard, API, and shared console surfaces used to inspect state and health.
+
+## Shared Console
+
+Tracker-dispatched local runs now expose a shared console surface:
+
+- a stable local `tmux` session per active issue
+- an `Open Console` link in the dashboard
+- a web console at `/console/<issue_identifier>`
+- controlled operator commands instead of raw stdin passthrough: `help`, `status`, `explain`, `continue`, `prompt <text>`, and `cancel`
 
 ## Fastest Way To Use It
 

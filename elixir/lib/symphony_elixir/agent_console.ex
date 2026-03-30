@@ -167,8 +167,7 @@ defmodule SymphonyElixir.AgentConsole do
     {:ok,
      %{
        console: console,
-       output:
-         "state=#{console.state} pending_operator_notes=#{console.pending_operator_notes} attach_command=#{console.attach_command}"
+       output: "state=#{console.state} pending_operator_notes=#{console.pending_operator_notes} attach_command=#{console.attach_command}"
      }}
   end
 

@@ -205,16 +205,30 @@ codex:
 - If a later reload fails, Symphony keeps running with the last known good workflow and logs the
   reload error until the file is fixed.
 - `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
-  `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
+  `/`, `/console/<issue_identifier>`, `/api/v1/state`, `/api/v1/<issue_identifier>`,
+  `/api/v1/<issue_identifier>/console`, `/api/v1/<issue_identifier>/console/command`, and
+  `/api/v1/refresh`.
 
 ## Web dashboard
 
 The observability UI now runs on a minimal Phoenix stack:
 
 - LiveView for the dashboard at `/`
+- LiveView for the shared console at `/console/<issue_identifier>`
 - JSON API for operational debugging under `/api/v1/*`
 - Bandit as the HTTP server
 - Phoenix dependency static assets for the LiveView client bootstrap
+
+### Shared tmux console
+
+For local worker runs, Symphony now exposes a shared console around the existing `codex app-server`
+session instead of replacing the app-server transport.
+
+- Each active issue can have a stable local `tmux` session such as `sym-MT-123`.
+- The dashboard exposes an `Open Console` link plus the matching `tmux attach -t ...` command.
+- The web console restores transcript state from the shared tmux session with `tmux capture-pane`.
+- Operator input is controlled through a small command set rather than raw terminal passthrough:
+  `help`, `status`, `explain`, `continue`, `prompt <text>`, and `cancel`.
 
 ## Project Layout
 

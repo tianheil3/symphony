@@ -133,7 +133,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                 <colgroup>
                   <col style="width: 12rem;" />
                   <col style="width: 8rem;" />
-                  <col style="width: 7.5rem;" />
+                  <col style="width: 11rem;" />
                   <col style="width: 8.5rem;" />
                   <col />
                   <col style="width: 10rem;" />
@@ -154,6 +154,9 @@ defmodule SymphonyElixirWeb.DashboardLive do
                       <div class="issue-stack">
                         <span class="issue-id"><%= entry.issue_identifier %></span>
                         <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
+                        <%= if entry.console do %>
+                          <a class="issue-link" href={entry.console.web_path}>Open Console</a>
+                        <% end %>
                       </div>
                     </td>
                     <td>
@@ -175,6 +178,19 @@ defmodule SymphonyElixirWeb.DashboardLive do
                           </button>
                         <% else %>
                           <span class="muted">n/a</span>
+                        <% end %>
+
+                        <%= if entry.console do %>
+                          <button
+                            type="button"
+                            class="subtle-button"
+                            data-label="Copy tmux"
+                            data-copy={entry.console.attach_command}
+                            onclick="navigator.clipboard.writeText(this.dataset.copy); this.textContent = 'Copied'; clearTimeout(this._copyTimer); this._copyTimer = setTimeout(() => { this.textContent = this.dataset.label }, 1200);"
+                          >
+                            Copy tmux
+                          </button>
+                          <span class="muted"><%= entry.console.attach_command %></span>
                         <% end %>
                       </div>
                     </td>

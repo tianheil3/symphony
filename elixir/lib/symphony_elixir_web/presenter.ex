@@ -3,7 +3,7 @@ defmodule SymphonyElixirWeb.Presenter do
   Shared projections for the observability API and dashboard.
   """
 
-  alias SymphonyElixir.{Config, Orchestrator, StatusDashboard}
+  alias SymphonyElixir.{AgentConsole, Config, Orchestrator, StatusDashboard}
 
   @spec state_payload(GenServer.name(), timeout()) :: map()
   def state_payload(orchestrator, snapshot_timeout_ms) do
@@ -75,6 +75,7 @@ defmodule SymphonyElixirWeb.Presenter do
       },
       running: running && running_issue_payload(running),
       retry: retry && retry_issue_payload(retry),
+      console: console_payload(issue_identifier, running, retry),
       logs: %{
         codex_session_logs: []
       },
@@ -108,6 +109,7 @@ defmodule SymphonyElixirWeb.Presenter do
       last_message: summarize_message(entry.last_codex_message),
       started_at: iso8601(entry.started_at),
       last_event_at: iso8601(entry.last_codex_timestamp),
+      console: console_payload(entry.identifier, entry, nil),
       tokens: %{
         input_tokens: entry.codex_input_tokens,
         output_tokens: entry.codex_output_tokens,
@@ -139,6 +141,7 @@ defmodule SymphonyElixirWeb.Presenter do
       last_event: running.last_codex_event,
       last_message: summarize_message(running.last_codex_message),
       last_event_at: iso8601(running.last_codex_timestamp),
+      console: console_payload(running.identifier, running, nil),
       tokens: %{
         input_tokens: running.codex_input_tokens,
         output_tokens: running.codex_output_tokens,
@@ -180,6 +183,30 @@ defmodule SymphonyElixirWeb.Presenter do
 
   defp summarize_message(nil), do: nil
   defp summarize_message(message), do: StatusDashboard.humanize_codex_message(message)
+
+  defp console_payload(issue_identifier, running, retry) do
+    workspace_path =
+      (running && Map.get(running, :workspace_path)) ||
+        (retry && Map.get(retry, :workspace_path))
+
+    with true <- is_binary(issue_identifier),
+         true <- is_binary(workspace_path),
+         true <- File.exists?(Path.join(workspace_path, ".symphony/console/state.json")) do
+      workspace_path
+      |> AgentConsole.metadata()
+      |> Map.take([
+        :session_name,
+        :attach_command,
+        :web_path,
+        :allowed_commands,
+        :pending_operator_notes,
+        :state,
+        :available
+      ])
+    else
+      _ -> nil
+    end
+  end
 
   defp due_at_iso8601(due_in_ms) when is_integer(due_in_ms) do
     DateTime.utc_now()

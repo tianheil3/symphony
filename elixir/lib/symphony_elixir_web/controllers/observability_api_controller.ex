@@ -6,7 +6,8 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
   use Phoenix.Controller, formats: [:json]
 
   alias Plug.Conn
-  alias SymphonyElixirWeb.{Endpoint, Presenter}
+  alias SymphonyElixir.AgentConsole
+  alias SymphonyElixirWeb.{Endpoint, ObservabilityPubSub, Presenter}
 
   @spec state(Conn.t(), map()) :: Conn.t()
   def state(conn, _params) do
@@ -21,6 +22,46 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
 
       {:error, :issue_not_found} ->
         error_response(conn, 404, "issue_not_found", "Issue not found")
+    end
+  end
+
+  @spec console(Conn.t(), map()) :: Conn.t()
+  def console(conn, %{"issue_identifier" => issue_identifier}) do
+    with {:ok, payload, workspace_path} <- console_context(issue_identifier),
+         {:ok, transcript} <- AgentConsole.read_transcript(workspace_path) do
+      json(conn, %{issue_identifier: issue_identifier, console: payload.console, transcript: transcript})
+    else
+      {:error, :issue_not_found} ->
+        error_response(conn, 404, "issue_not_found", "Issue not found")
+
+      {:error, :console_unavailable} ->
+        error_response(conn, 404, "console_unavailable", "Console not available")
+
+      {:error, reason} ->
+        error_response(conn, 500, "console_read_failed", "Console read failed: #{inspect(reason)}")
+    end
+  end
+
+  @spec console_command(Conn.t(), map()) :: Conn.t()
+  def console_command(conn, %{"issue_identifier" => issue_identifier, "command" => command}) do
+    with {:ok, _payload, workspace_path} <- console_context(issue_identifier),
+         {:ok, result} <- AgentConsole.submit_command(workspace_path, command) do
+      ObservabilityPubSub.broadcast_update()
+      json(conn, result)
+    else
+      {:error, :issue_not_found} ->
+        error_response(conn, 404, "issue_not_found", "Issue not found")
+
+      {:error, :console_unavailable} ->
+        error_response(conn, 404, "console_unavailable", "Console not available")
+
+      {:error, {:unsupported_command, message}} ->
+        conn
+        |> put_status(422)
+        |> json(%{error: %{code: "unsupported_console_command", message: message}})
+
+      {:error, reason} ->
+        error_response(conn, 500, "console_command_failed", "Console command failed: #{inspect(reason)}")
     end
   end
 
@@ -59,5 +100,19 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
 
   defp snapshot_timeout_ms do
     Endpoint.config(:snapshot_timeout_ms) || 15_000
+  end
+
+  defp console_context(issue_identifier) when is_binary(issue_identifier) do
+    case Presenter.issue_payload(issue_identifier, orchestrator(), snapshot_timeout_ms()) do
+      {:ok, %{workspace: %{path: workspace_path}, console: console} = payload}
+      when is_binary(workspace_path) and is_map(console) ->
+        {:ok, payload, workspace_path}
+
+      {:ok, _payload} ->
+        {:error, :console_unavailable}
+
+      {:error, :issue_not_found} ->
+        {:error, :issue_not_found}
+    end
   end
 end
