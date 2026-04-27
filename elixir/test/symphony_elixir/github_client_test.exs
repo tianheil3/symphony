@@ -235,11 +235,9 @@ defmodule SymphonyElixir.GitHubClientTest do
                "## Codex Workpad\n\nSymphony claimed this issue in state `In Progress`."
              )
 
-    assert_receive {:github_request, :get, "/repos/owner/repo/issues/42/comments",
-                    %{page: 1, per_page: 100}}
+    assert_receive {:github_request, :get, "/repos/owner/repo/issues/42/comments", %{page: 1, per_page: 100}}
 
-    assert_receive {:github_request, :patch, "/repos/owner/repo/issues/comments/1001",
-                    %{body: "## Codex Workpad\n\nSymphony claimed this issue in state `In Progress`."}}
+    assert_receive {:github_request, :patch, "/repos/owner/repo/issues/comments/1001", %{body: "## Codex Workpad\n\nSymphony claimed this issue in state `In Progress`."}}
 
     refute_receive {:github_request, :post, _, _}
   end
@@ -275,10 +273,8 @@ defmodule SymphonyElixir.GitHubClientTest do
                "## Codex Workpad\n\nSymphony claimed this issue in state `Todo`."
              )
 
-    assert_receive {:github_request, :get, "/repos/owner/repo/issues/42/comments",
-                    %{page: 1, per_page: 100}}
+    assert_receive {:github_request, :get, "/repos/owner/repo/issues/42/comments", %{page: 1, per_page: 100}}
 
-    assert_receive {:github_request, :post, "/repos/owner/repo/issues/42/comments",
-                    %{body: "## Codex Workpad\n\nSymphony claimed this issue in state `Todo`."}}
+    assert_receive {:github_request, :post, "/repos/owner/repo/issues/42/comments", %{body: "## Codex Workpad\n\nSymphony claimed this issue in state `Todo`."}}
   end
 end

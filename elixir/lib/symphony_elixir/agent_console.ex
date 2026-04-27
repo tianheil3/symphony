@@ -92,33 +92,39 @@ defmodule SymphonyElixir.AgentConsole do
       when is_binary(workspace) and is_binary(base_prompt) do
     state = load_state(workspace)
 
-    cond do
-      Map.get(state, "cancel_requested") == true ->
-        updated_state =
-          state
-          |> Map.put("cancel_requested", false)
-          |> Map.put("pending_operator_notes", [])
-          |> Map.put("state", "completed")
+    if Map.get(state, "cancel_requested") == true do
+      cancel_next_turn(workspace, state)
+    else
+      continue_next_turn(workspace, base_prompt, state)
+    end
+  end
 
-        write_state(workspace, updated_state)
-        {:cancel, metadata_for(workspace, updated_state)}
+  defp cancel_next_turn(workspace, state) do
+    updated_state =
+      state
+      |> Map.put("cancel_requested", false)
+      |> Map.put("pending_operator_notes", [])
+      |> Map.put("state", "completed")
 
-      true ->
-        pending_notes = pending_operator_notes(state)
+    write_state(workspace, updated_state)
+    {:cancel, metadata_for(workspace, updated_state)}
+  end
 
-        if pending_notes != [] do
-          updated_state =
-            state
-            |> Map.put("pending_operator_notes", [])
-            |> Map.put("state", "running")
+  defp continue_next_turn(workspace, base_prompt, state) do
+    pending_notes = pending_operator_notes(state)
 
-          write_state(workspace, updated_state)
-          {:continue, append_operator_notes(base_prompt, pending_notes), metadata_for(workspace, updated_state)}
-        else
-          updated_state = Map.put(state, "state", "running")
-          write_state(workspace, updated_state)
-          {:continue, base_prompt, metadata_for(workspace, updated_state)}
-        end
+    if pending_notes != [] do
+      updated_state =
+        state
+        |> Map.put("pending_operator_notes", [])
+        |> Map.put("state", "running")
+
+      write_state(workspace, updated_state)
+      {:continue, append_operator_notes(base_prompt, pending_notes), metadata_for(workspace, updated_state)}
+    else
+      updated_state = Map.put(state, "state", "running")
+      write_state(workspace, updated_state)
+      {:continue, base_prompt, metadata_for(workspace, updated_state)}
     end
   end
 

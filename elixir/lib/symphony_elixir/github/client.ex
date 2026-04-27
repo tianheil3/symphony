@@ -378,23 +378,28 @@ defmodule SymphonyElixir.GitHub.Client do
   defp find_existing_workpad_comment_id(project_slug, number, page) do
     case request(:get, issue_comments_path(project_slug, number), %{per_page: @page_size, page: page}) do
       {:ok, comments} when is_list(comments) ->
-        case Enum.find_value(comments, &workpad_comment_id/1) do
-          nil ->
-            if length(comments) < @page_size do
-              {:error, :github_workpad_comment_not_found}
-            else
-              find_existing_workpad_comment_id(project_slug, number, page + 1)
-            end
-
-          comment_id ->
-            {:ok, comment_id}
-        end
+        existing_workpad_comment_result(project_slug, number, page, comments)
 
       {:ok, _unexpected} ->
         {:error, :github_unknown_payload}
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp existing_workpad_comment_result(project_slug, number, page, comments) do
+    case Enum.find_value(comments, &workpad_comment_id/1) do
+      nil -> next_workpad_comment_page(project_slug, number, page, comments)
+      comment_id -> {:ok, comment_id}
+    end
+  end
+
+  defp next_workpad_comment_page(project_slug, number, page, comments) do
+    if length(comments) < @page_size do
+      {:error, :github_workpad_comment_not_found}
+    else
+      find_existing_workpad_comment_id(project_slug, number, page + 1)
     end
   end
 

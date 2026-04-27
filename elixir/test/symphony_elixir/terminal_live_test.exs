@@ -40,11 +40,10 @@ defmodule SymphonyElixir.TerminalLiveTest do
   test "observability api exposes shared console metadata and accepts controlled operator commands" do
     {issue, workspace} = prepare_console_workspace("MT-HTTP")
     orchestrator_name = Module.concat(__MODULE__, :ConsoleApiOrchestrator)
+    snapshot = snapshot_with_console(issue, workspace)
+    refresh = refresh_snapshot()
 
-    start_supervised!(
-      {StaticOrchestrator,
-       name: orchestrator_name, snapshot: snapshot_with_console(issue, workspace), refresh: %{queued: true, coalesced: false, requested_at: DateTime.utc_now(), operations: ["poll"]}}
-    )
+    start_supervised!({StaticOrchestrator, name: orchestrator_name, snapshot: snapshot, refresh: refresh})
 
     start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
 
@@ -81,11 +80,10 @@ defmodule SymphonyElixir.TerminalLiveTest do
   test "dashboard and terminal live surfaces render the shared console attach path" do
     {issue, workspace} = prepare_console_workspace("MT-LIVE")
     orchestrator_name = Module.concat(__MODULE__, :ConsoleLiveOrchestrator)
+    snapshot = snapshot_with_console(issue, workspace)
+    refresh = refresh_snapshot()
 
-    start_supervised!(
-      {StaticOrchestrator,
-       name: orchestrator_name, snapshot: snapshot_with_console(issue, workspace), refresh: %{queued: true, coalesced: false, requested_at: DateTime.utc_now(), operations: ["poll"]}}
-    )
+    start_supervised!({StaticOrchestrator, name: orchestrator_name, snapshot: snapshot, refresh: refresh})
 
     start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
 
@@ -158,6 +156,10 @@ defmodule SymphonyElixir.TerminalLiveTest do
       rate_limits: %{"primary" => %{"remaining" => 11}},
       polling: %{checking?: false, next_poll_in_ms: 1_000, poll_interval_ms: 30_000}
     }
+  end
+
+  defp refresh_snapshot do
+    %{queued: true, coalesced: false, requested_at: DateTime.utc_now(), operations: ["poll"]}
   end
 
   defp start_test_endpoint(overrides) do

@@ -754,7 +754,7 @@ defmodule SymphonyElixir.Orchestrator do
           error: "failed to spawn agent: #{inspect(reason)}",
           worker_host: worker_host
         })
-      end
+    end
   end
 
   defp sync_issue_writeback_for_dispatch(%Issue{} = issue) do
@@ -779,22 +779,26 @@ defmodule SymphonyElixir.Orchestrator do
     original_state = issue.state
 
     if normalize_issue_state(original_state) == "todo" do
-      case dispatch_progress_state_name() do
-        nil ->
-          {issue, {:unchanged, original_state}}
-
-        next_state ->
-          case Tracker.update_issue_state(issue.id, next_state) do
-            :ok ->
-              {%{issue | state: next_state}, {:transitioned, original_state, next_state}}
-
-            {:error, reason} ->
-              Logger.warning("Failed to move issue to dispatch state for #{issue_context(issue)} target_state=#{inspect(next_state)} reason=#{inspect(reason)}")
-              {issue, {:transition_failed, original_state, next_state, reason}}
-          end
-      end
+      transition_issue_to_dispatch_state(issue, original_state, dispatch_progress_state_name())
     else
       {issue, {:unchanged, original_state}}
+    end
+  end
+
+  defp transition_issue_to_dispatch_state(issue, original_state, nil), do: {issue, {:unchanged, original_state}}
+
+  defp transition_issue_to_dispatch_state(issue, original_state, next_state) do
+    case Tracker.update_issue_state(issue.id, next_state) do
+      :ok ->
+        {%{issue | state: next_state}, {:transitioned, original_state, next_state}}
+
+      {:error, reason} ->
+        Logger.warning(
+          "Failed to move issue to dispatch state for #{issue_context(issue)} " <>
+            "target_state=#{inspect(next_state)} reason=#{inspect(reason)}"
+        )
+
+        {issue, {:transition_failed, original_state, next_state, reason}}
     end
   end
 

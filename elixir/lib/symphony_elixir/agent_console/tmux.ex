@@ -30,26 +30,28 @@ defmodule SymphonyElixir.AgentConsole.Tmux do
 
   @spec default_runner() :: runner()
   def default_runner do
-    fn args ->
-      case System.find_executable("tmux") do
-        nil ->
-          {:error, :tmux_unavailable}
+    fn args -> run_tmux(args, System.find_executable("tmux")) end
+  end
 
-        tmux ->
-          case System.cmd(tmux, args, stderr_to_stdout: true) do
-            {output, 0} ->
-              {:ok, String.trim(output)}
+  defp run_tmux(_args, nil), do: {:error, :tmux_unavailable}
 
-            {output, status} ->
-              if has_session_command?(args) and status == 1 do
-                {:error, :missing_session}
-              else
-                {:error, {:tmux_failed, status, String.trim(output)}}
-              end
-          end
-      end
+  defp run_tmux(args, tmux) do
+    tmux
+    |> System.cmd(args, stderr_to_stdout: true)
+    |> tmux_result(args)
+  end
+
+  defp tmux_result({output, 0}, _args), do: {:ok, String.trim(output)}
+
+  defp tmux_result({output, 1}, args) do
+    if has_session_command?(args) do
+      {:error, :missing_session}
+    else
+      {:error, {:tmux_failed, 1, String.trim(output)}}
     end
   end
+
+  defp tmux_result({output, status}, _args), do: {:error, {:tmux_failed, status, String.trim(output)}}
 
   defp create_session(session_name, workspace, console_dir, control_script_path, runner) do
     transcript_path = Path.join(console_dir, "transcript.log")

@@ -567,6 +567,7 @@ defmodule SymphonyElixir.AppServerTest do
         System.tmp_dir!(),
         "symphony-elixir-app-server-github-dynamic-tools-#{System.unique_integer([:positive])}"
       )
+
     try do
       File.mkdir_p!(test_root)
       workspace_root = Path.join(test_root, "workspaces")

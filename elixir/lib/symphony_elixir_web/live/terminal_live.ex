@@ -52,9 +52,6 @@ defmodule SymphonyElixirWeb.TerminalLive do
 
           {:error, {:unsupported_command, message}} ->
             {:noreply, assign(socket, :command_output, message)}
-
-          {:error, reason} ->
-            {:noreply, assign(socket, :command_output, "console command failed: #{inspect(reason)}")}
         end
 
       _ ->
@@ -136,7 +133,8 @@ defmodule SymphonyElixirWeb.TerminalLive do
     issue_identifier = socket.assigns.issue_identifier
 
     case Presenter.issue_payload(issue_identifier, orchestrator(), snapshot_timeout_ms()) do
-      {:ok, %{workspace: %{path: workspace_path}, console: console}} when is_binary(workspace_path) and is_map(console) ->
+      {:ok, %{workspace: %{path: workspace_path}, console: console}}
+      when is_binary(workspace_path) and is_map(console) ->
         transcript =
           case AgentConsole.read_transcript(workspace_path) do
             {:ok, payload} -> payload

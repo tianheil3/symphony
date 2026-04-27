@@ -59,9 +59,6 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
         conn
         |> put_status(422)
         |> json(%{error: %{code: "unsupported_console_command", message: message}})
-
-      {:error, reason} ->
-        error_response(conn, 500, "console_command_failed", "Console command failed: #{inspect(reason)}")
     end
   end
 
