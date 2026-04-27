@@ -82,14 +82,41 @@ Tracker-dispatched local runs now expose a shared console surface:
 - a web console at `/console/<issue_identifier>`
 - controlled operator commands instead of raw stdin passthrough: `help`, `status`, `explain`, `continue`, `prompt <text>`, and `cancel`
 
-## Fastest Way To Use It
+## Use Symphony With A Real Project
 
-The fastest path is the repo-first `symphony-concierge` skill.
+[English](#use-symphony-with-a-real-project) | [中文](README.zh-CN.md#在真实项目中使用-symphony)
 
-From inside your target repository, ask Codex to:
+The recommended real-project path is the repo-first `symphony-concierge` skill. It is designed to be
+run from inside the target repository, generate the install manifest, install `WORKFLOW.md`, launch
+Symphony, and verify the local dashboard/API before handing the setup back to you.
+
+### Prerequisites
+
+Before onboarding a real project, make sure:
+
+- the target project is a Git repository,
+- `origin` points at an ordinary GitHub repository,
+- `gh` is installed and authenticated,
+- `GITHUB_TOKEN` is available when you want Symphony agents to comment on issues, push branches, and
+  create pull requests,
+- Codex is available as `codex app-server`,
+- the project has a clear validation command, for example `npm run check`, `npm test`, or `make test`.
+
+For GitHub, the token should have enough permission to read/write issues, push branches, and create
+pull requests. Keep branch protection and required CI checks enabled on important repositories.
+
+### Install And Invoke The Skill
+
+From inside the target repository, ask Codex to install and run the concierge skill:
 
 ```text
 Install the symphony-concierge skill from https://github.com/tianheil3/symphony.git path .codex/skills/symphony-concierge, then use it to set up Symphony for this repository.
+```
+
+If the skill is already installed, you can ask directly:
+
+```text
+Use symphony-concierge to set up Symphony for this repository. Use GitHub as the tracker and use npm run check as the validation command.
 ```
 
 The concierge flow will:
@@ -98,28 +125,127 @@ The concierge flow will:
 2. ask setup questions in one batch,
 3. write `.symphony/install/request.json`,
 4. run `symphony install --manifest .symphony/install/request.json`,
-5. start Symphony on a selected local port,
-6. verify both process liveness and API health before reporting success.
+5. create or verify GitHub workflow-state labels when the tracker is GitHub,
+6. start Symphony on a selected local port,
+7. verify both process liveness and API health before reporting success.
 
-For GitHub tracker setups, the concierge flow must also verify or create the default workflow-state
-labels:
+If `symphony` is not already installed, the bundled helper will download a matching release asset
+from this repository's GitHub Releases.
 
-- `Todo`
-- `In Progress`
-- `Done`
+### Setup Questions
+
+The skill asks for these values:
+
+- tracker provider: `github`, `linear`, or `gitlab`; for most real-project GitHub repos, use `github`,
+- tracker project slug: for GitHub, use `owner/repo`,
+- workspace root: where Symphony creates per-issue workspaces,
+- workspace bootstrap command: usually `git clone --depth 1 <origin-url> .`,
+- Codex command: usually `codex app-server`,
+- validation command before handoff: the command agents must run before claiming completion.
+
+For first production-like runs, keep the workflow conservative:
+
+```yaml
+agent:
+  max_concurrent_agents: 1
+  max_turns: 10
+codex:
+  command: codex app-server
+```
+
+Increase concurrency only after you have reviewed several completed PRs and understand the failure
+modes for your repository.
+
+### GitHub Issue Workflow
+
+For GitHub tracker setups, Symphony uses workflow-state labels as the source of truth:
+
+- `Todo`: ready for Symphony pickup
+- `In Progress`: claimed by Symphony
+- `Done`: implementation and handoff completed
 
 GitHub issue pickup depends on those labels. A newly created GitHub issue that is merely `open`
 but has no active-state label such as `Todo` will not be treated as candidate work by the default
 Symphony workflow.
 
-For GitHub tracker setups, the generated `WORKFLOW.md` should also explicitly instruct agents to:
+The generated `WORKFLOW.md` should explicitly instruct agents to:
 
-- use `gh issue comment` for the persistent workpad
-- use `gh api` for workflow-state label changes
-- avoid `linear_graphql` or other Linear-only closeout tools entirely
+- use `gh issue comment` for the persistent workpad,
+- use `gh api` or `gh issue edit` for workflow-state label changes,
+- avoid `linear_graphql` or other Linear-only closeout tools when `tracker.kind=github`,
+- work only inside the Symphony-created issue workspace,
+- run the configured validation command before creating a handoff or PR.
 
-If `symphony` is not already installed, the bundled helper will download a matching release asset
-from this repository's GitHub Releases.
+### Operating Model
+
+After setup, the normal loop is:
+
+1. create or choose a GitHub issue,
+2. add the `Todo` label,
+3. start or keep Symphony running,
+4. watch the dashboard URL reported by the concierge flow,
+5. let Symphony move the issue to `In Progress`,
+6. review the generated branch and PR,
+7. rely on CI and human review before merging,
+8. let the issue move to `Done` only after validation and handoff are complete.
+
+For real projects, the safest default is PR-only automation: Symphony may push branches and open PRs,
+but humans and branch protection decide whether code lands on the protected branch.
+
+### What To Commit To Your Project
+
+The target repository should usually commit:
+
+- `WORKFLOW.md`, because it is the repo-specific execution contract,
+- any project documentation explaining how your team feeds issues to Symphony.
+
+The target repository should usually avoid committing local runtime state:
+
+- `.symphony/install/state.json`,
+- `.symphony/install/events.jsonl`,
+- `.symphony/install/launch.log`,
+- per-run workspace directories.
+
+Add project-specific ignore rules when needed so local Symphony state does not leak into normal code
+reviews.
+
+### Common Commands
+
+Launch from the target repository after setup:
+
+```sh
+symphony --i-understand-that-this-will-be-running-without-the-usual-guardrails --port 49190 ./WORKFLOW.md
+```
+
+Check API health:
+
+```sh
+curl -fsS http://127.0.0.1:49190/api/v1/state
+```
+
+Open the dashboard:
+
+```text
+http://127.0.0.1:49190/
+```
+
+List candidate GitHub issues:
+
+```sh
+gh issue list --repo owner/repo --label Todo --state open
+```
+
+### Safety Checklist
+
+Before using Symphony on high-value work:
+
+- start with one low-risk issue,
+- keep `max_concurrent_agents: 1`,
+- require CI on PRs,
+- require human review before merge,
+- keep secrets out of issue bodies and workflow prompts,
+- use trusted repositories and trusted local workspaces,
+- inspect the first few generated PRs carefully before increasing scope.
 
 ## Releases
 
