@@ -7,7 +7,12 @@ This document defines the installer-facing contract introduced for repo-first bo
 The repo-first path is designed around a global `symphony-concierge` skill bundle:
 
 1. Concierge scans the current repository once and caches discovery results.
-2. Concierge asks setup questions in one batch (no hidden re-scan after each answer).
+2. Concierge asks setup questions in one batch (no hidden re-scan after each answer), including a
+   workflow profile:
+   - `starter` for real-project first installs with conservative concurrency and PR handoff.
+   - `review-gated` for projects that want explicit review/rework states and PR/MR feedback sweep.
+   - `symphony-dev` only for Symphony's internal heavy workflow or repositories that explicitly
+     choose to adopt that shape.
 3. Concierge writes `.symphony/install/request.json`.
 4. Concierge runs:
 
@@ -23,9 +28,10 @@ symphony install --manifest .symphony/install/request.json
    - a live spawned process
    - a successful API health response at `http://127.0.0.1:<selected_port>/api/v1/state`
    Dashboard reachability at `http://127.0.0.1:<selected_port>/` is recorded as additional signal.
-7. For GitHub tracker setups, concierge verifies or creates the default workflow-state labels
-   `Todo`, `In Progress`, and `Done`, and must explain that candidate issue pickup depends on those
-   labels rather than generic GitHub `open` state alone. The generated `WORKFLOW.md` must also
+7. For GitHub tracker setups, concierge verifies or creates the workflow-state labels required by
+   the selected profile. `starter` requires `Todo`, `In Progress`, and `Done`; `review-gated` also
+   requires `Human Review` and `Rework`. Concierge must explain that candidate issue pickup depends
+   on those labels rather than generic GitHub `open` state alone. The generated `WORKFLOW.md` must also
    route comments and status transitions through GitHub tools (`gh issue comment`, `gh api`) and
    explicitly forbid Linear-only closeout tools in GitHub mode.
 8. Concierge reports either verified launch success or a precise blocker from either phase.

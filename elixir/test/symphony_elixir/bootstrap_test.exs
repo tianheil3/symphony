@@ -51,7 +51,7 @@ defmodule SymphonyElixir.BootstrapTest do
     vendored_gstack_readme = File.read!(Path.join([target_root, ".codex", "skills", "gstack", "README.md"]))
 
     assert workflow =~ "project_slug: \"demo-project\""
-    assert workflow =~ "kind: \"linear\""
+    assert workflow =~ "kind: \"github\""
     assert workflow =~ "git clone --depth 1 git@github.com:example/demo.git ."
     refute workflow =~ "\"Human Review\""
     assert workflow =~ "\"Merging\""

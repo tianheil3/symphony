@@ -80,7 +80,7 @@ defmodule SymphonyElixir.Installer.Inspector do
 
   defp default_tracker_provider_key(remote_url) when is_binary(remote_url) do
     case forge_key(remote_url) do
-      "github" -> "linear"
+      "github" -> "github"
       _ -> "linear"
     end
   end

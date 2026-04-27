@@ -37,6 +37,7 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.Installer.TrackerProviders.GitHub,
           SymphonyElixir.Installer.TrackerProviders.GitLab,
           SymphonyElixir.Installer.TrackerProviders.Linear,
+          SymphonyElixir.Installer.WorkflowProfile,
           SymphonyElixir.Linear.Client,
           SymphonyElixir.SpecsCheck,
           SymphonyElixir.Orchestrator,

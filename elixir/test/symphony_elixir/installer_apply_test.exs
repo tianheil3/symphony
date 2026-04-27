@@ -18,8 +18,8 @@ defmodule SymphonyElixir.InstallerApplyTest do
     assert inspection.target_root == target_root
     assert inspection.remote_url == "git@github.com:example/demo.git"
     assert inspection.repo_name_default == Path.basename(target_root)
-    assert inspection.tracker_provider_default_key == "linear"
-    assert inspection.tracker_provider.module == SymphonyElixir.Installer.TrackerProviders.Linear
+    assert inspection.tracker_provider_default_key == "github"
+    assert inspection.tracker_provider.module == SymphonyElixir.Installer.TrackerProviders.GitHub
     assert inspection.forge_provider.key == "github"
     assert inspection.forge_provider.module == SymphonyElixir.Installer.ForgeProviders.GitHub
   end
@@ -60,6 +60,65 @@ defmodule SymphonyElixir.InstallerApplyTest do
 
     assert workflow_artifact.content =~ "Forge provider: GitHub"
     assert workflow_artifact.content =~ "Validation command before handoff: mix test"
+  end
+
+  test "planned_artifacts/1 renders starter profile with conservative real-project defaults" do
+    target_root = temp_repo_root!("installer-render-starter-profile")
+
+    artifacts =
+      target_root
+      |> github_plan()
+      |> Map.merge(%{
+        workflow_profile: "starter",
+        hosted_review_flow?: false,
+        human_review_polling?: false,
+        skills: ["commit", "pull", "push"],
+        validation_command: nil,
+        merging_state: nil
+      })
+      |> Map.drop([:active_states, :terminal_states])
+      |> Render.planned_artifacts()
+
+    workflow = workflow_content_from_artifacts(artifacts)
+
+    assert workflow =~ "Workflow profile: starter"
+    assert workflow =~ "active_states: [\"Todo\", \"In Progress\"]"
+    assert workflow =~ "max_concurrent_agents: 1"
+    assert workflow =~ "max_turns: 10"
+    assert workflow =~ "Run the most relevant validation for the current scope"
+    assert workflow =~ "Create or update a PR/MR for code changes"
+    assert workflow =~ "Do not auto-merge by default."
+    refute workflow =~ "Merging"
+    refute Enum.any?(artifacts, &String.ends_with?(&1.path, ".codex/skills/land/SKILL.md"))
+  end
+
+  test "planned_artifacts/1 renders review-gated profile without enabling land flow" do
+    target_root = temp_repo_root!("installer-render-review-gated-profile")
+
+    artifacts =
+      target_root
+      |> github_plan()
+      |> Map.merge(%{
+        workflow_profile: "review-gated",
+        hosted_review_flow?: false,
+        human_review_polling?: true,
+        skills: ["commit", "pull", "push"],
+        merging_state: nil
+      })
+      |> Map.drop([:active_states, :terminal_states])
+      |> Render.planned_artifacts()
+
+    workflow = workflow_content_from_artifacts(artifacts)
+
+    assert workflow =~ "Workflow profile: review-gated"
+    assert workflow =~ "active_states: [\"Todo\", \"In Progress\", \"Human Review\", \"Rework\"]"
+    assert workflow =~ "max_concurrent_agents: 1"
+    assert workflow =~ "max_turns: 12"
+    assert workflow =~ "sweep all new PR review feedback"
+    assert workflow =~ "Do not auto-merge by default."
+    refute workflow =~ "Merging"
+    refute workflow =~ "land"
+    refute Enum.any?(artifacts, &String.ends_with?(&1.path, ".codex/skills/land/SKILL.md"))
   end
 
   test "planned_artifacts/1 omits optional agents and PR template artifacts when disabled" do
@@ -242,6 +301,13 @@ defmodule SymphonyElixir.InstallerApplyTest do
       merging_state: "Merging",
       done_state: "Done"
     }
+  end
+
+  defp workflow_content_from_artifacts(artifacts) do
+    artifacts
+    |> Enum.find(fn artifact -> String.ends_with?(artifact.path, "WORKFLOW.md") end)
+    |> Map.fetch!(:content)
+    |> IO.iodata_to_binary()
   end
 
   defp temp_repo_root!(suffix) do

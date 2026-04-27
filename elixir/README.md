@@ -34,18 +34,19 @@ Symphony stops the active agent for that issue and cleans up matching workspaces
    - Linear: `LINEAR_API_KEY`
    - GitLab: `GITLAB_API_TOKEN`
    - GitHub Issues: `GITHUB_TOKEN`
-3. Copy this directory's `WORKFLOW.md` to your repo.
+3. Use the `symphony-concierge` skill from your target repo, or create a repo-specific
+   `WORKFLOW.md` from the service spec.
 4. Optionally copy the `commit`, `push`, `pull`, `land`, and tracker-specific skills to your repo.
    - The `linear` skill expects Symphony's `linear_graphql` app-server tool for raw Linear GraphQL
      operations such as comment editing or upload flows.
    - GitHub-backed workflows should use a `github` skill built on `gh`.
    - GitLab-backed workflows should use a `gitlab` skill built on `glab`.
-5. Customize the copied `WORKFLOW.md` file for your project.
+5. Customize the generated `WORKFLOW.md` file for your project.
    - To get your project's slug, right-click the project and copy its URL. The slug is part of the
      URL.
-   - When creating a workflow based on this repo, note that it depends on non-standard Linear
-     issue statuses: "Rework", "Human Review", and "Merging". You can customize them in
-     Team Settings → Workflow in Linear.
+   - Do not copy this repository's `WORKFLOW.md` verbatim for a new project. It is Symphony's
+     internal Linear workflow and depends on project-specific setup, status names, and review
+     conventions.
 6. Follow the instructions below to install the required runtime dependencies and start the service.
 
 ## Prerequisites
@@ -63,7 +64,7 @@ The fastest setup path is the global `symphony-concierge` skill bundle:
 
 1. Open your target GitHub repository in your coding agent.
 2. Invoke `symphony-concierge`.
-3. The skill performs one repo scan, asks setup questions, writes
+3. The skill performs one repo scan, asks setup questions, selects a workflow profile, writes
    `.symphony/install/request.json`, and runs:
    - `symphony install --manifest .symphony/install/request.json`
 4. Installer/apply phase: the installer writes repo-local state under `.symphony/install/*`.
@@ -71,6 +72,14 @@ The fastest setup path is the global `symphony-concierge` skill bundle:
    a selected free local port, requires both a live spawned process and API health response, and
    records dashboard reachability as an additional signal before reporting completion.
 6. If either phase fails, the skill reports an explicit blocker.
+
+The concierge skill supports three workflow profiles:
+
+- `starter`: default for real projects. It uses conservative agent limits, PR handoff, and no
+  automatic merge.
+- `review-gated`: adds explicit `Human Review` and `Rework` states plus PR/MR feedback sweep rules.
+- `symphony-dev`: only for this repository or repositories that intentionally adopt Symphony's
+  heavier internal workflow.
 
 The same skill bundle includes `scripts/ensure_symphony_installer.sh`, which reuses an existing
 `symphony` binary when available or downloads a matching release asset from GitHub Releases when
@@ -140,21 +149,24 @@ Minimal example:
 ```md
 ---
 tracker:
-  kind: linear
-  project_slug: "..."
+  kind: github
+  project_slug: "your-org/your-repo"
+  active_states:
+    - Todo
+    - In Progress
 workspace:
   root: ~/code/workspaces
 hooks:
   after_create: |
     git clone git@github.com:your-org/your-repo.git .
 agent:
-  max_concurrent_agents: 10
-  max_turns: 20
+  max_concurrent_agents: 1
+  max_turns: 10
 codex:
   command: codex app-server
 ---
 
-You are working on a Linear issue {{ issue.identifier }}.
+You are working on a GitHub issue {{ issue.identifier }}.
 
 Title: {{ issue.title }} Body: {{ issue.description }}
 ```
@@ -283,15 +295,15 @@ actively running subagents, which is very useful during development.
 
 ### What's the easiest way to set this up for my own codebase?
 
-Use the `symphony-concierge` skill in your target repo. It asks setup questions, writes
-`.symphony/install/request.json`, runs `symphony install --manifest ...`, then launches Symphony on
-a selected free local port and verifies API health while the spawned process remains alive before
-declaring success. It also reports dashboard reachability as an additional signal. For GitHub
-tracker setups, it must verify or create the default workflow-state labels `Todo`, `In Progress`,
-and `Done`, and it should tell the operator that new GitHub issues must carry an active-state label
-such as `Todo` before Symphony will pick them up. The generated `WORKFLOW.md` should also make
-GitHub comment/state handling explicit and forbid Linear-only closeout tools in GitHub mode. If
-setup cannot finish, it reports a precise blocker to fix.
+Use the `symphony-concierge` skill in your target repo. It asks setup questions, selects a workflow
+profile (`starter`, `review-gated`, or `symphony-dev`), writes `.symphony/install/request.json`,
+runs `symphony install --manifest ...`, then launches Symphony on a selected free local port and
+verifies API health while the spawned process remains alive before declaring success. For GitHub
+tracker setups, it must verify or create the workflow-state labels required by the selected profile
+and tell the operator that new GitHub issues must carry an active-state label such as `Todo` before
+Symphony will pick them up. The generated `WORKFLOW.md` should also make GitHub comment/state
+handling explicit and forbid Linear-only closeout tools in GitHub mode. If setup cannot finish, it
+reports a precise blocker to fix.
 
 ## License
 

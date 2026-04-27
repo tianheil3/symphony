@@ -1,11 +1,9 @@
 ---
 name: symphony-concierge
 description: |
-  Repo-first Symphony concierge flow: scan the current repository once, ask setup
-  questions, write `.symphony/install/request.json`, run
-  `symphony install --manifest ...`, launch Symphony on a selected local port,
-  verify API health while the spawned process is alive, and report launch
-  success or a precise blocker.
+  Use when setting up Symphony from inside a target repository, especially when
+  the repository needs a repo-owned WORKFLOW.md, tracker wiring, installer
+  manifest, launch verification, or a real-project workflow profile.
 ---
 
 # Symphony Concierge
@@ -70,138 +68,120 @@ If this helper cannot provide `symphony`, stop and report the exact blocker.
 
 ## Step 3: Ask setup questions (single batch)
 
-Ask these questions in one message, with defaults from the one-pass scan:
+Ask these questions in one message, with defaults from the one-pass scan. Do not ask follow-up
+questions unless a required answer is unusable.
 
-1. Tracker provider: `linear`, `gitlab`, or `github` (default: `linear`)
-2. Tracker project slug (required; for GitHub tracker use `owner/repo`)
-3. Workspace root (default: `~/code/<repo-name>-workspaces`)
-4. Workspace bootstrap command (default: `git clone --depth 1 <origin-remote> .`)
-5. Codex command (default: `codex app-server`)
-6. Validation command before handoff (optional)
+1. Workflow profile:
+   - `starter` (default): real-project first install, conservative concurrency, PR handoff, no auto-merge.
+   - `review-gated`: adds explicit review/rework states and PR/MR feedback sweep before handoff.
+   - `symphony-dev`: only for this repository or when the operator explicitly asks for Symphony's internal heavy workflow.
+2. Existing `WORKFLOW.md` policy when `has_workflow=true`: `stop` (default), `keep`, or `replace`.
+   - Never overwrite an existing `WORKFLOW.md` unless the answer is exactly `replace`.
+   - If the answer is `keep`, do not generate a `WORKFLOW.md` durable asset; still write installer state and launch the existing file.
+3. Tracker provider: `github`, `linear`, or `gitlab` (default: `github` for GitHub remotes).
+4. Tracker project slug:
+   - GitHub: `owner/repo` (default from the origin remote when parseable).
+   - Linear/GitLab: require an explicit project slug.
+5. Workspace root (default: `~/code/<repo-name>-workspaces`).
+6. Workspace bootstrap command (default: `git clone --depth 1 <origin-remote> .`).
+7. Codex command (default: `codex app-server`).
+8. Validation command before handoff.
+   - For `starter` and `review-gated`, require either a concrete command or the literal answer `none`.
+   - If `none`, the generated workflow must require the agent to choose a targeted validation command and record why no repository-wide command exists.
+9. Agent limits (default: `max_concurrent_agents: 1`, `max_turns: 10`; allow explicit override).
 
 Then continue with no additional hidden scan loops.
 
-## Step 4: Build manifest and request state
+## Step 4: Build workflow content from the selected profile
 
 1. Pick the tracker token env var:
+   - `github` -> `GITHUB_TOKEN`
    - `linear` -> `LINEAR_API_KEY`
    - `gitlab` -> `GITLAB_API_TOKEN`
-   - `github` -> `GITHUB_TOKEN`
-2. Build a valid `WORKFLOW.md` payload for that tracker.
-3. Write `.symphony/install/request.json` with required installer fields.
+2. Resolve profile defaults:
+   - `starter`
+     - active states: `Todo`, `In Progress`
+     - terminal states: `Closed`, `Cancelled`, `Canceled`, `Duplicate`, `Done`
+     - max agents: `1`
+     - max turns: `10`
+     - no automated merge step
+   - `review-gated`
+     - active states: `Todo`, `In Progress`, `Human Review`, `Rework`
+     - terminal states: `Closed`, `Cancelled`, `Canceled`, `Duplicate`, `Done`
+     - max agents: `1`
+     - max turns: `12`
+     - no automated merge step unless the operator explicitly asks for one
+   - `symphony-dev`
+     - require explicit confirmation that this is for Symphony itself or for a repo intentionally adopting Symphony's internal Linear flow
+     - do not copy this repository's `elixir/WORKFLOW.md` blindly; regenerate project-specific clone, setup, state, and validation settings
+3. Generate a `WORKFLOW.md` that is self-contained and repo-specific. It must include:
+   - the chosen tracker provider and token env var
+   - workspace root and bootstrap hook
+   - conservative agent limits unless overridden
+   - the Codex app-server command
+   - a prompt body with status routing, workpad/comment rules, validation, PR/MR handoff, and provider-specific tool restrictions
+4. The generated prompt body must preserve these behavioral requirements:
+   - Work only inside the Symphony-created issue workspace.
+   - Use the tracker matching `tracker.kind` as the source of truth for comments, labels/states, and handoff.
+   - Maintain one persistent workpad comment per issue and update it instead of posting scattered progress comments.
+   - Mirror issue-provided acceptance criteria, `Validation`, `Test Plan`, or `Testing` sections into the workpad.
+   - Reproduce or inspect the issue signal before changing code when the issue describes a bug.
+   - Run the configured validation command before handoff; if validation is `none`, choose the narrowest meaningful validation and record the rationale.
+   - Create or update a PR/MR for code changes, attach/link it to the issue when the tracker supports it, and wait for CI/check evidence before marking work complete.
+   - Do not auto-merge by default.
+5. Provider-specific restrictions:
+   - GitHub workflows must use `gh issue comment`, `gh api`, `gh pr view`, and `gh pr checks` patterns, and must never use Linear-only tools.
+   - Linear workflows may use Linear MCP or `linear_graphql`, and must not use GitHub labels as workflow state.
+   - GitLab workflows must use `glab`/GitLab API patterns, and must not use Linear-only tools.
 
-Reference command shape:
+## Step 5: Build manifest and request state
 
-```bash
-mkdir -p "$repo_root/.symphony/install"
+Write `.symphony/install/request.json` with required installer fields.
 
-tmp_workflow="$(mktemp)"
-provider_prompt="$(cat <<EOF
-You are working on a ${tracker_provider} issue {{ issue.identifier }}.
+Required durable asset behavior:
 
-Title: {{ issue.title }}
-Current status: {{ issue.state }}
-Labels: {{ issue.labels }}
-Body: {{ issue.description }}
+- If no `WORKFLOW.md` exists, include generated `WORKFLOW.md` under `durable_assets.files`.
+- If `has_workflow=true` and existing policy is `replace`, include generated `WORKFLOW.md` under `durable_assets.files`.
+- If `has_workflow=true` and existing policy is `keep`, omit `WORKFLOW.md` from `durable_assets.files`.
+- If `has_workflow=true` and existing policy is `stop`, stop before writing installer state:
+  `Blocked: WORKFLOW.md already exists; rerun with keep or replace`.
 
-Work only inside the Symphony-created issue workspace.
-Before handing off or concluding your turn, run ${validation_command:-"the configured validation command for the current scope"}.
-Use the tracker provider matching \`tracker.kind\` as the source of truth for comments and state transitions.
-EOF
-)"
+Reference manifest shape:
 
-if [ "$tracker_provider" = "github" ]; then
-  provider_prompt="$(cat <<EOF
-You are working on a GitHub issue {{ issue.identifier }}.
-
-Repository: ${project_slug}
-Title: {{ issue.title }}
-Current status: {{ issue.state }}
-Labels: {{ issue.labels }}
-Body: {{ issue.description }}
-
-GitHub workflow rules:
-
-- Workflow-state labels are the source of truth for candidate issue pickup and progress.
-- Use \`gh issue comment\` for the persistent workpad comment.
-- Use \`gh api repos/<owner>/<repo>/issues/<number>\` for workflow-state label changes.
-- If the issue is labeled \`Todo\`, move it to \`In Progress\` before active implementation.
-- Move the issue to \`Done\` only after validation and final handoff are complete.
-- Never use Linear GraphQL, \`linear_graphql\`, or Linear-only closeout helpers when \`tracker.kind=github\`, even if those tools are available in the wider environment.
-
-Work only inside the Symphony-created issue workspace.
-Before handing off or concluding your turn, run ${validation_command:-"the configured validation command for the current scope"}.
-EOF
-)"
-fi
-
-cat >"$tmp_workflow" <<EOF
----
-tracker:
-  kind: ${tracker_provider}
-  api_key: \$${tracker_token_env}
-  project_slug: ${project_slug}
-  active_states:
-    - Todo
-    - In Progress
-  terminal_states:
-    - Closed
-    - Cancelled
-    - Canceled
-    - Duplicate
-    - Done
-workspace:
-  root: ${workspace_root}
-hooks:
-  after_create: |
-    ${after_create_command}
-agent:
-  max_concurrent_agents: 10
-  max_turns: 20
-codex:
-  command: ${codex_command}
----
-${provider_prompt}
-EOF
-
-jq -n \
-  --arg target_repo "$repo_root" \
-  --arg tracker_provider "$tracker_provider" \
-  --arg project_slug "$project_slug" \
-  --arg workflow "$(cat "$tmp_workflow")" \
-  '{
-    schema_version: 1,
-    installer_version_range: ">= 0.1.0",
-    capabilities: ["repo_first_bootstrap", "launch_verify_v1"],
-    target_repo: $target_repo,
-    tracker: {
-      provider: $tracker_provider,
-      project_slug: $project_slug
-    },
-    forge: {
-      provider: "github"
-    },
-    durable_assets: {
-      files: {
-        "WORKFLOW.md": $workflow
-      }
+```json
+{
+  "schema_version": 1,
+  "installer_version_range": ">= 0.1.0",
+  "capabilities": ["repo_first_bootstrap", "launch_verify_v1"],
+  "target_repo": "<repo_root>",
+  "tracker": {
+    "provider": "<tracker_provider>",
+    "project_slug": "<project_slug>"
+  },
+  "forge": {
+    "provider": "github"
+  },
+  "durable_assets": {
+    "files": {
+      "WORKFLOW.md": "<generated workflow, unless keeping an existing file>"
     }
-  }' > "$repo_root/.symphony/install/request.json"
-
-rm -f "$tmp_workflow"
+  }
+}
 ```
 
 If `jq` is unavailable, write equivalent JSON with another deterministic method.
 
-## Step 5: For GitHub tracker, ensure workflow-state labels exist
+## Step 6: For GitHub tracker, ensure workflow-state labels exist
 
 GitHub candidate issues are driven by workflow-state labels, not by the repository's generic open/closed state alone. The concierge flow MUST make this explicit and MUST ensure the required labels exist before reporting setup success.
 
-Required labels for the default GitHub flow:
+Required labels:
 
 - `Todo`
 - `In Progress`
 - `Done`
+- `Human Review` when `workflow_profile=review-gated`
+- `Rework` when `workflow_profile=review-gated`
 
 Reference command shape:
 
@@ -217,10 +197,16 @@ if [ "$tracker_provider" = "github" ]; then
     exit 1
   fi
 
-  for spec in \
-    "Todo:0E8A16:Ready for Symphony pickup" \
-    "In Progress:1D76DB:Actively being worked by Symphony" \
-    "Done:8250DF:Completed by Symphony"; do
+  label_specs="Todo:0E8A16:Ready for Symphony pickup
+In Progress:1D76DB:Actively being worked by Symphony
+Done:8250DF:Completed by Symphony"
+  if [ "$workflow_profile" = "review-gated" ]; then
+    label_specs="$label_specs
+Human Review:6F42C1:Waiting for human review
+Rework:D93F0B:Reviewer requested changes"
+  fi
+
+  printf '%s\n' "$label_specs" | while IFS= read -r spec; do
     label_name="${spec%%:*}"
     rest="${spec#*:}"
     label_color="${rest%%:*}"
@@ -229,7 +215,16 @@ if [ "$tracker_provider" = "github" ]; then
   done
 
   existing_labels="$(gh label list --repo "$project_slug" --limit 200 --json name --jq '.[].name')"
-  for required_label in "Todo" "In Progress" "Done"; do
+  required_labels="Todo
+In Progress
+Done"
+  if [ "$workflow_profile" = "review-gated" ]; then
+    required_labels="$required_labels
+Human Review
+Rework"
+  fi
+
+  printf '%s\n' "$required_labels" | while IFS= read -r required_label; do
     if ! printf '%s\n' "$existing_labels" | grep -Fx -- "$required_label" >/dev/null; then
       echo "Blocked: required GitHub workflow-state label missing after setup: $required_label"
       exit 1
@@ -244,7 +239,7 @@ When `tracker_provider=github`, the concierge summary MUST also state:
 - new GitHub issues must carry an active-state label such as `Todo` to be picked up by Symphony
 - the generated `WORKFLOW.md` explicitly routes issue comments and state transitions through GitHub tools, not Linear tools
 
-## Step 6: Apply installer manifest
+## Step 7: Apply installer manifest
 
 Run:
 
@@ -255,7 +250,7 @@ install_exit=${PIPESTATUS[0]}
 set -e
 ```
 
-## Step 7: Launch Symphony and verify reachability
+## Step 8: Launch Symphony and verify reachability
 
 Only continue when install succeeded:
 
@@ -316,7 +311,7 @@ PY
 fi
 ```
 
-## Step 8: Summarize success or blocker precisely
+## Step 9: Summarize success or blocker precisely
 
 When `install_exit == 0` and `launch_ok == "true"`:
 
@@ -333,8 +328,9 @@ When `install_exit == 0` and `launch_ok == "true"`:
   - dashboard URL (optional signal): `$dashboard_url`
   - dashboard probe status: `$dashboard_ok`
   - launch PID and `.symphony/install/launch.log` path
+- Confirm the selected workflow profile and whether `WORKFLOW.md` was generated, kept, or replaced.
 - When `tracker_provider=github`, also confirm:
-  - workflow-state labels `Todo`, `In Progress`, and `Done` exist
+  - required workflow-state labels for the selected profile exist
   - new GitHub issues must be created or updated with an active-state label such as `Todo` before Symphony will pick them up
 
 When `install_exit != 0`:

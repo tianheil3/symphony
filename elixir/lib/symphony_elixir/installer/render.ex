@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.Installer.Render do
   @moduledoc false
 
+  alias SymphonyElixir.Installer.WorkflowProfile
+
   @default_todo_state "Todo"
   @default_in_progress_state "In Progress"
   @default_rework_state "Rework"
@@ -11,6 +13,8 @@ defmodule SymphonyElixir.Installer.Render do
 
   @spec planned_artifacts(map()) :: [%{path: String.t(), content: iodata()}]
   def planned_artifacts(plan) do
+    plan = WorkflowProfile.apply_defaults(plan)
+
     workflow = %{path: Path.join(plan.target_root, "WORKFLOW.md"), content: workflow_content(plan)}
 
     troubleshooting = %{
@@ -69,8 +73,8 @@ defmodule SymphonyElixir.Installer.Render do
         "  timeout_ms: 60000",
         hook_entry("after_create", plan.after_create_command),
         "agent:",
-        "  max_concurrent_agents: 10",
-        "  max_turns: 20",
+        "  max_concurrent_agents: #{yaml_value(plan.agent_max_concurrent_agents)}",
+        "  max_turns: #{yaml_value(plan.agent_max_turns)}",
         "codex:",
         "  command: #{yaml_value(plan.codex_command)}",
         "  approval_policy: \"never\"",
@@ -112,6 +116,7 @@ defmodule SymphonyElixir.Installer.Render do
       "{% endif %}",
       "",
       "Repository defaults:",
+      "- Workflow profile: #{plan.workflow_profile}",
       "- Validation command before handoff: #{plan.validation_command || "No default validation command configured."}",
       "- Forge provider: #{plan.forge_provider.display_name}",
       "- Hosted review automation: #{bool_label(plan.hosted_review_flow?)}",
@@ -137,6 +142,8 @@ defmodule SymphonyElixir.Installer.Render do
       "6. Before any handoff, run the required validation for the current scope and record the result in the workpad.",
       "7. Stop early only for true blockers such as missing auth, permissions, or secrets.",
       "8. Work only inside the provided repository copy.",
+      "9. Create or update a PR/MR for code changes, attach or link it to the tracker issue when available, and wait for CI/check evidence before marking work complete.",
+      "10. Do not auto-merge by default.",
       "",
       "Related skills:"
     ]
@@ -303,6 +310,13 @@ defmodule SymphonyElixir.Installer.Render do
     forge_provider_module(plan).execution_flow_lines(plan)
   end
 
+  defp provider_execution_flow_lines(%{workflow_profile: "review-gated"} = plan) do
+    [
+      "6. When a PR/MR exists, attach or update the PR/MR URL on the tracker issue and sweep all new #{review_feedback_label(plan)} review feedback before returning to `#{plan.human_review_state}`.",
+      "7. Leave the final merge to humans unless a separate repository workflow explicitly enables automated merge."
+    ]
+  end
+
   defp provider_execution_flow_lines(_plan) do
     ["6. Use tracker comments and state transitions as the primary handoff surface."]
   end
@@ -318,6 +332,10 @@ defmodule SymphonyElixir.Installer.Render do
 
   defp forge_provider_module(%{forge_provider: %{module: module}}), do: module
   defp tracker_provider_module(%{tracker_provider: %{module: module}}), do: module
+
+  defp review_feedback_label(%{forge_provider: %{key: "github"}}), do: "PR"
+  defp review_feedback_label(%{forge_provider: %{key: "gitlab"}}), do: "MR"
+  defp review_feedback_label(_plan), do: "PR/MR"
 
   defp common_skill_name?(skill_name) when is_binary(skill_name) do
     skill_name in @always_installed_skills
