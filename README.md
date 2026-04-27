@@ -2,9 +2,25 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-Symphony is a work orchestration system for coding agents. Instead of supervising one terminal session
-at a time, you define how work should be pulled, executed, verified, and landed, then let Symphony
-run that loop repeatedly.
+Run coding agents from real tracker issues to verified pull requests.
+
+Symphony turns issue-driven engineering work into a repeatable local runtime: it picks up work from
+GitHub, Linear, or GitLab; creates an isolated workspace; starts Codex in app-server mode; enforces
+your repo workflow; and hands back a branch, PR, or tracker update only after validation.
+
+| Connect work | Isolate execution | Verify handoff |
+| --- | --- | --- |
+| Poll GitHub issues, Linear issues, or GitLab work items. | Create one workspace per task and run Codex inside it. | Run repo-defined checks before PRs, comments, or state transitions. |
+
+<p align="center">
+  <a href="#github-issues-to-pr"><strong>GitHub Issues -&gt; PR</strong></a>
+  ·
+  <a href="#linear-issues-to-pr"><strong>Linear Issues -&gt; PR</strong></a>
+  ·
+  <a href="#repo-first-concierge">Install with the skill</a>
+  ·
+  <a href="#common-commands">Run locally</a>
+</p>
 
 This repository is an independent fork of
 [`openai/symphony`](https://github.com/openai/symphony) with substantial changes around repo-first
@@ -17,78 +33,72 @@ by OpenAI.
 > Symphony is still an engineering preview. Use it in trusted repositories and with clear operational
 > boundaries.
 
-## What This Project Is
+## Choose A Setup Path
 
-Symphony is for teams and individuals who want to manage work at the issue or ticket layer instead
-of manually driving every coding-agent turn.
+[English](#choose-a-setup-path) | [中文](README.zh-CN.md#选择接入路径)
 
-At a high level, Symphony gives you:
+The fastest real-project path is the repo-first `symphony-concierge` skill. Run it from the target
+repository root and it will generate the install manifest, write `WORKFLOW.md`, launch Symphony, and
+verify the local dashboard/API.
 
-- a tracker-driven work loop,
-- per-task isolated workspaces,
-- Codex app-server execution inside those workspaces,
-- verification and observability around each run,
-- a repo-first concierge path for onboarding an existing repository.
+| If your work starts in... | Use this tracker | Typical outcome |
+| --- | --- | --- |
+| GitHub Issues | `github` | Symphony moves labels, comments on the issue, pushes a branch, and opens a PR. |
+| Linear | `linear` | Symphony moves Linear states, writes Linear comments, pushes a GitHub branch, and opens a PR. |
+| GitLab | `gitlab` | Supported by the runtime; the concierge path is narrower than GitHub/Linear today. |
 
-## Why It Exists
+### GitHub Issues To PR
 
-Most coding-agent workflows still depend on a human to:
+Ask Codex from inside the target repository:
 
-- read the issue,
-- open the right repository,
-- bootstrap the environment,
-- remember the workflow rules,
-- monitor execution,
-- verify output quality,
-- land the change safely.
+```text
+Use symphony-concierge to set up Symphony for this repository. Use GitHub as the tracker and use npm run check as the validation command.
+```
 
-Symphony moves that repetitive coordination into a reusable runtime and workflow contract.
+Default GitHub states are labels:
 
-## Vision
+| Label | Meaning |
+| --- | --- |
+| `Todo` | Ready for Symphony pickup |
+| `In Progress` | Claimed and being worked |
+| `Done` | Validated and handed off |
 
-The goal is not just "run an agent on an issue." The goal is to make project work operational:
+New GitHub issues must have an active-state label such as `Todo`. An open issue with no active label
+will not be picked up by the default workflow.
 
-- work enters from a real tracker,
-- execution happens in isolated environments,
-- every run follows repo-specific workflow rules,
-- verification is part of the system rather than an afterthought,
-- onboarding a new repository becomes repeatable instead of artisanal.
+### Linear Issues To PR
 
-## System Architecture
+Ask Codex from inside the target repository:
 
-The runtime loop is intentionally simple:
+```text
+Use symphony-concierge to set up Symphony for this repository. Use Linear as the tracker, use my Linear project slug, and use npm run check as the validation command.
+```
 
-1. Symphony polls a tracker for candidate work.
-2. For each claimed issue, Symphony creates or reuses an isolated workspace.
-3. It launches Codex in app-server mode inside that workspace.
-4. It sends a workflow prompt derived from `WORKFLOW.md` plus the issue context.
-5. It monitors progress, verification signals, and tracker state until the work is done or blocked.
+Default Linear states are issue workflow states:
 
-The main system pieces are:
+| State | Meaning |
+| --- | --- |
+| `Todo` | Ready for Symphony pickup |
+| `In Progress` | Claimed and being worked |
+| `Done` | Validated and handed off |
+| `Canceled` / `Duplicate` | Terminal states Symphony should ignore |
 
-- `tracker`: where work comes from. The current Elixir runtime supports `linear`, `gitlab`, and
-  `github`.
-- `workspace`: where each task gets its own checkout and bootstrap commands.
-- `codex runtime`: the agent execution engine, typically `codex app-server`.
-- `workflow contract`: the YAML front matter and prompt body in `WORKFLOW.md`.
-- `observability`: the local dashboard, API, and shared console surfaces used to inspect state and health.
+Linear controls work intake and status. GitHub still controls code review and merge when the code
+forge is GitHub, so Linear-backed runs commonly end with a GitHub PR linked from a Linear comment.
 
-## Shared Console
+## How It Runs
 
-Tracker-dispatched local runs now expose a shared console surface:
+```text
+Tracker issue -> isolated workspace -> Codex app-server -> validation -> PR / tracker update
+```
 
-- a stable local `tmux` session per active issue
-- an `Open Console` link in the dashboard
-- a web console at `/console/<issue_identifier>`
-- controlled operator commands instead of raw stdin passthrough: `help`, `status`, `explain`, `continue`, `prompt <text>`, and `cancel`
+1. Symphony polls the configured tracker for active work.
+2. It creates or reuses a task-specific workspace.
+3. It launches `codex app-server` inside that workspace.
+4. It sends a prompt built from `WORKFLOW.md` plus the issue context.
+5. It monitors events, console output, validation, and tracker state until completion or blockage.
 
-## Use Symphony With A Real Project
-
-[English](#use-symphony-with-a-real-project) | [中文](README.zh-CN.md#在真实项目中使用-symphony)
-
-The recommended real-project path is the repo-first `symphony-concierge` skill. It is designed to be
-run from inside the target repository, generate the install manifest, install `WORKFLOW.md`, launch
-Symphony, and verify the local dashboard/API before handing the setup back to you.
+## Repo-First Concierge
 
 ### Prerequisites
 
@@ -110,24 +120,12 @@ For Linear, the API key should be able to read issues in the selected project an
 state changes. Symphony still uses GitHub as the code forge for branches and pull requests, so a
 Linear-tracked project usually needs both `LINEAR_API_KEY` and GitHub push/PR credentials.
 
-### Install And Invoke The Skill
+### Install The Skill
 
 From inside the target repository, ask Codex to install and run the concierge skill:
 
 ```text
 Install the symphony-concierge skill from https://github.com/tianheil3/symphony.git path .codex/skills/symphony-concierge, then use it to set up Symphony for this repository.
-```
-
-If the skill is already installed, you can ask directly:
-
-```text
-Use symphony-concierge to set up Symphony for this repository. Use GitHub as the tracker and use npm run check as the validation command.
-```
-
-For a Linear-tracked project, ask for Linear explicitly:
-
-```text
-Use symphony-concierge to set up Symphony for this repository. Use Linear as the tracker, use my Linear project slug, and use npm run check as the validation command.
 ```
 
 The concierge flow will:
@@ -143,7 +141,7 @@ The concierge flow will:
 If `symphony` is not already installed, the bundled helper will download a matching release asset
 from this repository's GitHub Releases.
 
-### Setup Questions
+### What The Skill Asks
 
 The skill asks for these values:
 
@@ -167,9 +165,10 @@ codex:
 Increase concurrency only after you have reviewed several completed PRs and understand the failure
 modes for your repository.
 
-### Example Workflow Configs
+<details>
+<summary>Example GitHub WORKFLOW.md</summary>
 
-GitHub tracker example:
+Use this shape when GitHub Issues are the tracker:
 
 ```yaml
 ---
@@ -200,7 +199,12 @@ Work only inside the Symphony-created issue workspace.
 Run `npm run check` before handoff.
 ```
 
-Linear tracker example:
+</details>
+
+<details>
+<summary>Example Linear WORKFLOW.md</summary>
+
+Use this shape when Linear is the tracker and GitHub is the code forge:
 
 ```yaml
 ---
@@ -232,80 +236,35 @@ Run `npm run check` before handoff.
 Open a GitHub pull request for code review when code changes are ready.
 ```
 
-### GitHub Issue Workflow
+</details>
 
-For GitHub tracker setups, Symphony uses workflow-state labels as the source of truth:
+## Workflow Rules
 
-- `Todo`: ready for Symphony pickup
-- `In Progress`: claimed by Symphony
-- `Done`: implementation and handoff completed
+The generated `WORKFLOW.md` is the contract that keeps runs predictable.
 
-GitHub issue pickup depends on those labels. A newly created GitHub issue that is merely `open`
-but has no active-state label such as `Todo` will not be treated as candidate work by the default
-Symphony workflow.
+| Tracker | Agent should use | Agent should avoid |
+| --- | --- | --- |
+| GitHub | `gh issue comment`, `gh api`, `gh issue edit`, branch/PR commands | `linear_graphql` and Linear-only closeout helpers |
+| Linear | `linear_graphql` for issue reads, comments, workpad updates, and state changes | GitHub issue-label commands for tracker state |
 
-The generated `WORKFLOW.md` should explicitly instruct agents to:
+For every tracker, the agent should work only inside the Symphony-created issue workspace and run the
+configured validation command before handoff.
 
-- use `gh issue comment` for the persistent workpad,
-- use `gh api` or `gh issue edit` for workflow-state label changes,
-- avoid `linear_graphql` or other Linear-only closeout tools when `tracker.kind=github`,
-- work only inside the Symphony-created issue workspace,
-- run the configured validation command before creating a handoff or PR.
-
-### Linear Issue Workflow
-
-For Linear tracker setups, Symphony uses Linear issue states as the source of truth. Configure
-`active_states` to the states Symphony may pick up and continue, and configure `terminal_states` to
-states that mean the issue should not be worked by Symphony anymore.
-
-A common Linear setup is:
-
-- `Todo`: ready for Symphony pickup
-- `In Progress`: claimed by Symphony
-- `Done`: completed by Symphony after validation and handoff
-- `Canceled` or `Duplicate`: terminal states Symphony should ignore
-
-For Linear, the generated `WORKFLOW.md` should explicitly instruct agents to:
-
-- use the `linear_graphql` dynamic tool for Linear comments, workpad updates, issue reads, and state
-  transitions,
-- query the issue by id before final closeout when state correctness matters,
-- avoid GitHub issue-label commands for tracker state because Linear is the source of truth,
-- still use GitHub branches and pull requests for code review when the code forge is GitHub,
-- work only inside the Symphony-created issue workspace,
-- run the configured validation command before creating a handoff or PR.
-
-The Linear tracker controls work intake and status. GitHub still controls code review and merge. In
-practice, a Linear-backed run often ends with a GitHub PR linked from a Linear comment.
-
-### Operating Model
-
-After setup, the normal GitHub-tracker loop is:
-
-1. create or choose a GitHub issue,
-2. add the `Todo` label,
-3. start or keep Symphony running,
-4. watch the dashboard URL reported by the concierge flow,
-5. let Symphony move the issue to `In Progress`,
-6. review the generated branch and PR,
-7. rely on CI and human review before merging,
-8. let the issue move to `Done` only after validation and handoff are complete.
+## Operating Model
 
 For real projects, the safest default is PR-only automation: Symphony may push branches and open PRs,
-but humans and branch protection decide whether code lands on the protected branch.
+but humans, CI, and branch protection decide whether code lands on the protected branch.
 
-The normal Linear-tracker loop is:
+| Step | GitHub tracker | Linear tracker |
+| --- | --- | --- |
+| 1 | Create or choose a GitHub issue. | Create or choose a Linear issue. |
+| 2 | Add `Todo`. | Move it to `Todo` or another active state. |
+| 3 | Start or keep Symphony running. | Start or keep Symphony running. |
+| 4 | Symphony moves the issue to `In Progress`. | Symphony moves the issue to `In Progress`. |
+| 5 | Review the generated branch and PR. | Review the generated GitHub branch and PR. |
+| 6 | Move to `Done` after validation and handoff. | Move to `Done` after validation and handoff. |
 
-1. create or choose a Linear issue in the configured project,
-2. move it to an active state such as `Todo`,
-3. start or keep Symphony running,
-4. watch the dashboard URL reported by the concierge flow,
-5. let Symphony move the issue to `In Progress`,
-6. review the generated GitHub branch and PR,
-7. rely on CI and human review before merging,
-8. let the Linear issue move to `Done` only after validation and handoff are complete.
-
-### What To Commit To Your Project
+## What To Commit
 
 The target repository should usually commit:
 
@@ -322,7 +281,18 @@ The target repository should usually avoid committing local runtime state:
 Add project-specific ignore rules when needed so local Symphony state does not leak into normal code
 reviews.
 
-### Common Commands
+## Operator Surfaces
+
+Tracker-dispatched local runs expose:
+
+- a dashboard with active agents, tokens, status, and event summaries,
+- an API at `/api/v1/state`,
+- a stable local `tmux` session per active issue,
+- a web console at `/console/<issue_identifier>`,
+- controlled operator commands: `help`, `status`, `explain`, `continue`, `prompt <text>`, and
+  `cancel`.
+
+## Common Commands
 
 Launch from the target repository after setup:
 
@@ -352,7 +322,7 @@ For Linear, candidate work is visible in the Linear project view by filtering to
 active states such as `Todo` and `In Progress`. Inside an agent run, Linear reads and writes should go
 through the `linear_graphql` tool exposed by Symphony's Codex app-server session.
 
-### Safety Checklist
+## Safety Checklist
 
 Before using Symphony on high-value work:
 
@@ -363,6 +333,21 @@ Before using Symphony on high-value work:
 - keep secrets out of issue bodies and workflow prompts,
 - use trusted repositories and trusted local workspaces,
 - inspect the first few generated PRs carefully before increasing scope.
+
+## Current Scope
+
+Current runtime scope:
+
+- Elixir-based reference runtime
+- tracker support for Linear, GitLab, and GitHub
+- repo-first concierge v1 aimed at ordinary GitHub repositories
+- release assets for `linux/x86_64` and `darwin/arm64`
+
+Current limitations:
+
+- the concierge path is intentionally narrow in v1 and is most polished for GitHub and Linear-backed
+  GitHub repositories,
+- this remains prototype software rather than a hardened production control plane.
 
 ## Releases
 
@@ -380,20 +365,6 @@ Latest release:
 
 These assets are what make the repo-first concierge path practical for other repositories without
 requiring a manual local build first.
-
-## Current Scope
-
-Current runtime scope:
-
-- Elixir-based reference runtime
-- tracker support for Linear, GitLab, and GitHub
-- repo-first concierge v1 aimed at ordinary GitHub repositories
-- release assets for `linux/x86_64` and `darwin/arm64`
-
-Current limitations:
-
-- the concierge path is intentionally narrow in v1 and assumes a GitHub-hosted target repository,
-- this remains prototype software rather than a hardened production control plane.
 
 ## Relationship To The Upstream Fork
 

@@ -2,8 +2,25 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-Symphony 是一个面向 coding agent 的工作编排系统。它的目标不是让人类盯着每一次 agent
-执行，而是把“任务从哪里来、如何执行、如何验证、如何落地”这些流程变成一个可重复运行的系统。
+让 coding agent 从真实 tracker issue 出发，交付经过验证的 pull request。
+
+Symphony 把 issue 驱动的工程工作变成一个可重复运行的本地运行时：它从 GitHub、Linear 或 GitLab
+领取任务，为每个任务创建隔离 workspace，在其中启动 Codex app-server，执行仓库自己的 workflow，
+并在验证通过后交回分支、PR 或 tracker 状态更新。
+
+| 接入任务 | 隔离执行 | 验证交付 |
+| --- | --- | --- |
+| 轮询 GitHub issue、Linear issue 或 GitLab work item。 | 每个任务一个 workspace，在里面运行 Codex。 | 按仓库定义的检查命令验证后再 PR、评论或改状态。 |
+
+<p align="center">
+  <a href="#github-issues-到-pr"><strong>GitHub Issues -&gt; PR</strong></a>
+  ·
+  <a href="#linear-issues-到-pr"><strong>Linear Issues -&gt; PR</strong></a>
+  ·
+  <a href="#repo-first-concierge">用 skill 安装</a>
+  ·
+  <a href="#常用命令">本地运行</a>
+</p>
 
 这个仓库最初 fork 自
 [`openai/symphony`](https://github.com/openai/symphony)，但现在已经加入了较大改造，重点放在
@@ -15,79 +32,71 @@ repo-first 接入、release 分发，以及 GitHub 场景下的一句话 onboard
 > [!WARNING]
 > Symphony 目前仍然属于工程预览版本，更适合在可信仓库和清晰边界下试用。
 
-## 这是什么
+## 选择接入路径
 
-Symphony 适合那些想把“管理工作”而不是“手动驾驶 agent”作为默认方式的团队或个人。
+[English](README.md#choose-a-setup-path) | [中文](#选择接入路径)
 
-它提供的核心能力包括：
+真实项目最快路径是 repo-first 的 `symphony-concierge` skill。在目标仓库根目录里运行后，它会生成
+安装 manifest、写入 `WORKFLOW.md`、启动 Symphony，并验证本地 dashboard/API 是否可访问。
 
-- 从 tracker 拉取任务
-- 为每个任务创建隔离 workspace
-- 在 workspace 中启动 Codex app-server
-- 通过 `WORKFLOW.md` 约束执行流程
-- 为每次运行提供验证和可观测性
-- 提供一个 repo-first 的 concierge 接入路径，把现有仓库接进 Symphony
+| 任务来源 | tracker | 常见结果 |
+| --- | --- | --- |
+| GitHub Issues | `github` | Symphony 改 label、评论 issue、push 分支、创建 PR。 |
+| Linear | `linear` | Symphony 改 Linear state、写 Linear comment、push GitHub 分支、创建 PR。 |
+| GitLab | `gitlab` | runtime 支持；concierge 路径目前不如 GitHub/Linear 完整。 |
 
-## 为什么要做它
+### GitHub Issues 到 PR
 
-今天很多 coding agent 工作流仍然要人类不断重复这些动作：
+在目标仓库里对 Codex 说：
 
-- 打开 issue
-- 切到正确仓库
-- 手动准备环境
-- 把项目规则再说一遍
-- 盯着 agent 执行
-- 验证结果
-- 安全落地改动
+```text
+使用 symphony-concierge 接入当前仓库，tracker 用 GitHub，验证命令用 npm run check。
+```
 
-Symphony 的目标是把这些重复协调动作沉淀成运行时和工作流契约，让系统去重复，而不是人。
+默认 GitHub 状态是 labels：
 
-## 愿景
+| Label | 含义 |
+| --- | --- |
+| `Todo` | 等待 Symphony 领取 |
+| `In Progress` | 已领取并处理中 |
+| `Done` | 已验证并完成 handoff |
 
-这个项目的目标不是“让 agent 跑一个 issue”这么窄。
+新 GitHub issue 必须有 `Todo` 之类 active-state label。只有 open、但没有 active label 的 issue，
+默认不会被 Symphony 拉取。
 
-更大的目标是把项目工作变成一种可操作的系统：
+### Linear Issues 到 PR
 
-- 任务从真实 tracker 进入
-- 执行发生在隔离环境里
-- 每次运行都遵守仓库自己的 workflow
-- 验证是系统的一部分，而不是事后补救
-- 新仓库接入不再靠手工拼 prompt，而是变成稳定流程
+在目标仓库里对 Codex 说：
 
-## 系统架构
+```text
+使用 symphony-concierge 接入当前仓库，tracker 用 Linear，使用我的 Linear project slug，验证命令用 npm run check。
+```
 
-运行时主循环是比较直接的：
+默认 Linear 状态是 issue workflow states：
 
-1. Symphony 轮询 tracker，找出可执行任务
-2. 为每个任务创建或复用一个隔离 workspace
-3. 在 workspace 中启动 Codex app-server
-4. 根据 `WORKFLOW.md` 和 issue 内容生成执行 prompt
-5. 持续监控执行状态、验证信号和 tracker 状态，直到完成或阻塞
+| State | 含义 |
+| --- | --- |
+| `Todo` | 等待 Symphony 领取 |
+| `In Progress` | 已领取并处理中 |
+| `Done` | 已验证并完成 handoff |
+| `Canceled` / `Duplicate` | 终态，Symphony 应忽略 |
 
-系统的主要组成部分是：
+Linear 管任务来源和任务状态。如果代码 forge 是 GitHub，代码 review 和 merge 仍然由 GitHub 控制，
+所以 Linear-backed run 通常会在 Linear comment 里附上 GitHub PR。
 
-- `tracker`：任务来源。目前 Elixir runtime 支持 `linear`、`gitlab`、`github`
-- `workspace`：每个任务的独立 checkout 和 bootstrap 环境
-- `codex runtime`：实际执行 agent 的引擎，通常是 `codex app-server`
-- `workflow contract`：`WORKFLOW.md` 里的 YAML 配置和 Markdown prompt
-- `observability`：本地 dashboard、API，以及共享 console 面，用来查看状态与健康情况
+## 运行方式
 
-## Shared Console
+```text
+Tracker issue -> isolated workspace -> Codex app-server -> validation -> PR / tracker update
+```
 
-本地 worker 的 tracker 任务现在会暴露一个共享 console：
+1. Symphony 轮询 tracker，找出 active work。
+2. 为任务创建或复用隔离 workspace。
+3. 在 workspace 里启动 `codex app-server`。
+4. 根据 `WORKFLOW.md` 和 issue 内容生成 prompt。
+5. 持续监控事件、console、验证结果和 tracker 状态，直到完成或阻塞。
 
-- 每个活跃 issue 都会有一个稳定的本地 `tmux` session
-- dashboard 里会出现 `Open Console`
-- Web console 路径是 `/console/<issue_identifier>`
-- operator 只能发送受控命令，不能原样把 stdin 透传给 agent：`help`、`status`、`explain`、`continue`、`prompt <text>`、`cancel`
-
-## 在真实项目中使用 Symphony
-
-[English](README.md#use-symphony-with-a-real-project) | [中文](#在真实项目中使用-symphony)
-
-真实项目推荐走 repo-first 的 `symphony-concierge` skill。这个 skill 应该在目标仓库根目录里运行，
-它会生成安装 manifest、写入 `WORKFLOW.md`、启动 Symphony，并在交还给你之前验证本地 dashboard/API
-是否可访问。
+## Repo-First Concierge
 
 ### 前置条件
 
@@ -108,24 +117,12 @@ Linear API key 至少要能读取目标 project 里的 issue，并能写 comment
 通常仍然把 GitHub 当作代码 forge 来 push 分支和创建 PR，所以 Linear tracker 项目一般同时需要
 `LINEAR_API_KEY` 和 GitHub push/PR 凭据。
 
-### 安装并调用 skill
+### 安装 skill
 
 在目标仓库根目录里，对 Codex 说：
 
 ```text
 从 https://github.com/tianheil3/symphony.git 安装 .codex/skills/symphony-concierge，然后用它帮当前仓库接入 Symphony。
-```
-
-如果 skill 已经安装好，可以直接说：
-
-```text
-使用 symphony-concierge 接入当前仓库，tracker 用 GitHub，验证命令用 npm run check。
-```
-
-如果项目用 Linear 管任务，可以明确说：
-
-```text
-使用 symphony-concierge 接入当前仓库，tracker 用 Linear，使用我的 Linear project slug，验证命令用 npm run check。
 ```
 
 concierge 流程会：
@@ -141,7 +138,7 @@ concierge 流程会：
 如果本机还没有 `symphony`，skill 自带的 helper 会尝试从本仓库的 GitHub Releases 下载对应平台的
 安装包。
 
-### 配置时会问什么
+### Skill 会问什么
 
 skill 会一次性询问这些值：
 
@@ -164,9 +161,10 @@ codex:
 
 先审过几个完整 PR、理解当前仓库的失败模式后，再考虑提高并发。
 
-### WORKFLOW 配置示例
+<details>
+<summary>GitHub WORKFLOW.md 示例</summary>
 
-GitHub tracker 示例：
+GitHub Issues 作为 tracker 时，可以使用这种形状：
 
 ```yaml
 ---
@@ -197,7 +195,12 @@ codex:
 handoff 前运行 `npm run check`。
 ```
 
-Linear tracker 示例：
+</details>
+
+<details>
+<summary>Linear WORKFLOW.md 示例</summary>
+
+Linear 作为 tracker、GitHub 作为代码 forge 时，可以使用这种形状：
 
 ```yaml
 ---
@@ -229,78 +232,35 @@ handoff 前运行 `npm run check`。
 代码改动准备好后，创建 GitHub pull request 供 review。
 ```
 
-### GitHub issue 工作流
+</details>
 
-GitHub tracker 场景下，Symphony 使用 workflow-state labels 作为任务状态来源：
+## Workflow 规则
 
-- `Todo`：等待 Symphony 领取
-- `In Progress`：Symphony 已领取并正在处理
-- `Done`：实现和 handoff 已完成
+`WORKFLOW.md` 是保证运行可预测的核心契约。
 
-GitHub 场景下，Symphony 默认不是只看 issue 是否 `open`，而是看 issue 是否带有这些 workflow-state
-labels。也就是说，一个新建但没有 `Todo` 之类 active-state label 的 GitHub issue，默认不会被
-Symphony 当成候选任务拉取。
+| Tracker | Agent 应该使用 | Agent 应该避免 |
+| --- | --- | --- |
+| GitHub | `gh issue comment`、`gh api`、`gh issue edit`、branch/PR 命令 | `linear_graphql` 和 Linear-only closeout 工具 |
+| Linear | 用 `linear_graphql` 读 issue、写 comment、更新 workpad、修改状态 | 用 GitHub issue label 命令管理 tracker 状态 |
 
-生成出来的 `WORKFLOW.md` 应该显式要求 agent：
+无论 tracker 是什么，agent 都应该只在 Symphony 创建的 issue workspace 里工作，并且在 handoff 前运行
+配置好的验证命令。
 
-- 用 `gh issue comment` 维护持久 workpad comment
-- 用 `gh api` 或 `gh issue edit` 修改 workflow-state labels
-- 当 `tracker.kind=github` 时，不要调用 `linear_graphql` 或任何 Linear-only closeout 工具
-- 只在 Symphony 创建的 issue workspace 里工作
-- 创建 handoff 或 PR 前必须运行配置好的验证命令
-
-### Linear issue 工作流
-
-Linear tracker 场景下，Symphony 使用 Linear issue state 作为任务状态来源。`active_states` 配置
-Symphony 可以领取或继续处理的状态，`terminal_states` 配置不应该再处理的终态。
-
-常见 Linear 配置是：
-
-- `Todo`：等待 Symphony 领取
-- `In Progress`：Symphony 已领取并正在处理
-- `Done`：验证和 handoff 完成
-- `Canceled` 或 `Duplicate`：终态，Symphony 应忽略
-
-Linear 场景下，生成出来的 `WORKFLOW.md` 应该显式要求 agent：
-
-- 使用 `linear_graphql` 动态工具读取 Linear issue、写 workpad comment、更新 comment、修改状态
-- 最终 closeout 前，如果状态正确性很重要，要按 issue id 再查一次 Linear
-- 不要用 GitHub issue label 命令管理 tracker 状态，因为 Linear 才是状态来源
-- 如果代码 forge 是 GitHub，仍然使用 GitHub branch 和 pull request 做代码 review
-- 只在 Symphony 创建的 issue workspace 里工作
-- 创建 handoff 或 PR 前必须运行配置好的验证命令
-
-Linear 负责“任务从哪里来、状态是什么”；GitHub 负责“代码怎么 review、怎么 merge”。实际使用中，
-Linear-backed run 通常会在 Linear comment 里附上对应 GitHub PR。
-
-### 日常运行模型
-
-接入完成后，GitHub tracker 的正常循环是：
-
-1. 创建或选择一个 GitHub issue
-2. 给它加 `Todo` label
-3. 启动或保持 Symphony 运行
-4. 打开 concierge 报告的 dashboard URL 观察状态
-5. Symphony 会把 issue 移到 `In Progress`
-6. 审查生成的分支和 PR
-7. 依赖 CI 和人工 review 决定是否合并
-8. 只有验证和 handoff 完成后，issue 才移动到 `Done`
+## 日常运行模型
 
 真实项目里最安全的默认模式是“只自动开 PR”：Symphony 可以 push branch、创建 PR，但是否进入受保护
 主分支，仍然由 CI、branch protection 和人类 review 决定。
 
-Linear tracker 的正常循环是：
+| 步骤 | GitHub tracker | Linear tracker |
+| --- | --- | --- |
+| 1 | 创建或选择一个 GitHub issue。 | 创建或选择一个 Linear issue。 |
+| 2 | 添加 `Todo` label。 | 移到 `Todo` 或其他 active state。 |
+| 3 | 启动或保持 Symphony 运行。 | 启动或保持 Symphony 运行。 |
+| 4 | Symphony 把 issue 移到 `In Progress`。 | Symphony 把 issue 移到 `In Progress`。 |
+| 5 | 审查生成的分支和 PR。 | 审查生成的 GitHub 分支和 PR。 |
+| 6 | 验证和 handoff 完成后移到 `Done`。 | 验证和 handoff 完成后移到 `Done`。 |
 
-1. 在配置好的 Linear project 里创建或选择一个 issue
-2. 把它移动到 `Todo` 之类 active state
-3. 启动或保持 Symphony 运行
-4. 打开 concierge 报告的 dashboard URL 观察状态
-5. Symphony 会把 issue 移到 `In Progress`
-6. 审查生成的 GitHub 分支和 PR
-7. 依赖 CI 和人工 review 决定是否合并
-8. 只有验证和 handoff 完成后，Linear issue 才移动到 `Done`
-
-### 应该提交到目标仓库的内容
+## 应该提交什么
 
 目标仓库通常应该提交：
 
@@ -316,7 +276,17 @@ Linear tracker 的正常循环是：
 
 如果需要，给目标项目加对应 ignore 规则，避免本地 Symphony 状态进入普通代码 review。
 
-### 常用命令
+## Operator Surfaces
+
+Tracker-dispatched 本地运行会暴露：
+
+- dashboard：查看 active agents、tokens、状态和事件摘要
+- API：`/api/v1/state`
+- 每个活跃 issue 一个稳定的本地 `tmux` session
+- Web console：`/console/<issue_identifier>`
+- 受控 operator 命令：`help`、`status`、`explain`、`continue`、`prompt <text>`、`cancel`
+
+## 常用命令
 
 接入完成后，在目标仓库里启动：
 
@@ -346,7 +316,7 @@ Linear 的候选任务可以在 Linear project view 里按配置好的 active st
 `In Progress`。在 agent 运行过程中，Linear 的读取和写入应通过 Symphony Codex app-server session
 暴露的 `linear_graphql` 工具完成。
 
-### 安全检查清单
+## 安全检查清单
 
 在高价值项目上使用前：
 
@@ -357,6 +327,20 @@ Linear 的候选任务可以在 Linear project view 里按配置好的 active st
 - 不要把 secrets 写进 issue body 或 workflow prompt
 - 只在可信仓库和可信本地 workspace 中运行
 - 前几个 PR 要仔细审查，再扩大使用范围
+
+## 当前范围
+
+当前这版主要覆盖：
+
+- Elixir 参考实现
+- Linear / GitLab / GitHub tracker 支持
+- 面向普通 GitHub 仓库的 repo-first concierge v1
+- `linux/x86_64` 与 `darwin/arm64` 的安装器 release 资产
+
+当前仍然存在的边界：
+
+- concierge v1 是故意收窄的，当前对 GitHub 以及 Linear-backed GitHub 仓库最完整
+- 这还是原型系统，不是已经打磨完成的生产级控制平面
 
 ## Release 分发
 
@@ -374,20 +358,6 @@ Linear 的候选任务可以在 Linear project view 里按配置好的 active st
 
 这些 release 资产是“一句话接入”成立的关键，因为它让 `symphony-concierge` 不必要求用户先手工在本
 机编译 Symphony。
-
-## 当前范围
-
-当前这版主要覆盖：
-
-- Elixir 参考实现
-- Linear / GitLab / GitHub tracker 支持
-- 面向普通 GitHub 仓库的 repo-first concierge v1
-- `linux/x86_64` 与 `darwin/arm64` 的安装器 release 资产
-
-当前仍然存在的边界：
-
-- concierge v1 是故意收窄的，主要服务 GitHub 托管仓库
-- 这还是原型系统，不是已经打磨完成的生产级控制平面
 
 ## 与上游 fork 的关系
 
