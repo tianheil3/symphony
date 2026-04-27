@@ -99,11 +99,16 @@ Before onboarding a real project, make sure:
 - `gh` is installed and authenticated,
 - `GITHUB_TOKEN` is available when you want Symphony agents to comment on issues, push branches, and
   create pull requests,
+- `LINEAR_API_KEY` is available when Linear is the tracker,
 - Codex is available as `codex app-server`,
 - the project has a clear validation command, for example `npm run check`, `npm test`, or `make test`.
 
 For GitHub, the token should have enough permission to read/write issues, push branches, and create
 pull requests. Keep branch protection and required CI checks enabled on important repositories.
+
+For Linear, the API key should be able to read issues in the selected project and write comments or
+state changes. Symphony still uses GitHub as the code forge for branches and pull requests, so a
+Linear-tracked project usually needs both `LINEAR_API_KEY` and GitHub push/PR credentials.
 
 ### Install And Invoke The Skill
 
@@ -117,6 +122,12 @@ If the skill is already installed, you can ask directly:
 
 ```text
 Use symphony-concierge to set up Symphony for this repository. Use GitHub as the tracker and use npm run check as the validation command.
+```
+
+For a Linear-tracked project, ask for Linear explicitly:
+
+```text
+Use symphony-concierge to set up Symphony for this repository. Use Linear as the tracker, use my Linear project slug, and use npm run check as the validation command.
 ```
 
 The concierge flow will:
@@ -136,8 +147,8 @@ from this repository's GitHub Releases.
 
 The skill asks for these values:
 
-- tracker provider: `github`, `linear`, or `gitlab`; for most real-project GitHub repos, use `github`,
-- tracker project slug: for GitHub, use `owner/repo`,
+- tracker provider: `github`, `linear`, or `gitlab`,
+- tracker project slug: for GitHub, use `owner/repo`; for Linear, use the Linear project slug,
 - workspace root: where Symphony creates per-issue workspaces,
 - workspace bootstrap command: usually `git clone --depth 1 <origin-url> .`,
 - Codex command: usually `codex app-server`,
@@ -155,6 +166,71 @@ codex:
 
 Increase concurrency only after you have reviewed several completed PRs and understand the failure
 modes for your repository.
+
+### Example Workflow Configs
+
+GitHub tracker example:
+
+```yaml
+---
+tracker:
+  kind: github
+  api_key: $GITHUB_TOKEN
+  project_slug: owner/repo
+  active_states:
+    - Todo
+    - In Progress
+  terminal_states:
+    - Done
+    - Closed
+    - Canceled
+workspace:
+  root: ~/code/my-project-workspaces
+hooks:
+  after_create: |
+    git clone --depth 1 https://github.com/owner/repo.git .
+    npm install
+agent:
+  max_concurrent_agents: 1
+  max_turns: 10
+codex:
+  command: codex app-server
+---
+Work only inside the Symphony-created issue workspace.
+Run `npm run check` before handoff.
+```
+
+Linear tracker example:
+
+```yaml
+---
+tracker:
+  kind: linear
+  api_key: $LINEAR_API_KEY
+  project_slug: MYPROJECT
+  active_states:
+    - Todo
+    - In Progress
+  terminal_states:
+    - Done
+    - Canceled
+workspace:
+  root: ~/code/my-project-workspaces
+hooks:
+  after_create: |
+    git clone --depth 1 https://github.com/owner/repo.git .
+    npm install
+agent:
+  max_concurrent_agents: 1
+  max_turns: 10
+codex:
+  command: codex app-server
+---
+You are working on a Linear issue.
+Use the `linear_graphql` tool for Linear comments and state changes.
+Run `npm run check` before handoff.
+Open a GitHub pull request for code review when code changes are ready.
+```
 
 ### GitHub Issue Workflow
 
@@ -176,9 +252,35 @@ The generated `WORKFLOW.md` should explicitly instruct agents to:
 - work only inside the Symphony-created issue workspace,
 - run the configured validation command before creating a handoff or PR.
 
+### Linear Issue Workflow
+
+For Linear tracker setups, Symphony uses Linear issue states as the source of truth. Configure
+`active_states` to the states Symphony may pick up and continue, and configure `terminal_states` to
+states that mean the issue should not be worked by Symphony anymore.
+
+A common Linear setup is:
+
+- `Todo`: ready for Symphony pickup
+- `In Progress`: claimed by Symphony
+- `Done`: completed by Symphony after validation and handoff
+- `Canceled` or `Duplicate`: terminal states Symphony should ignore
+
+For Linear, the generated `WORKFLOW.md` should explicitly instruct agents to:
+
+- use the `linear_graphql` dynamic tool for Linear comments, workpad updates, issue reads, and state
+  transitions,
+- query the issue by id before final closeout when state correctness matters,
+- avoid GitHub issue-label commands for tracker state because Linear is the source of truth,
+- still use GitHub branches and pull requests for code review when the code forge is GitHub,
+- work only inside the Symphony-created issue workspace,
+- run the configured validation command before creating a handoff or PR.
+
+The Linear tracker controls work intake and status. GitHub still controls code review and merge. In
+practice, a Linear-backed run often ends with a GitHub PR linked from a Linear comment.
+
 ### Operating Model
 
-After setup, the normal loop is:
+After setup, the normal GitHub-tracker loop is:
 
 1. create or choose a GitHub issue,
 2. add the `Todo` label,
@@ -191,6 +293,17 @@ After setup, the normal loop is:
 
 For real projects, the safest default is PR-only automation: Symphony may push branches and open PRs,
 but humans and branch protection decide whether code lands on the protected branch.
+
+The normal Linear-tracker loop is:
+
+1. create or choose a Linear issue in the configured project,
+2. move it to an active state such as `Todo`,
+3. start or keep Symphony running,
+4. watch the dashboard URL reported by the concierge flow,
+5. let Symphony move the issue to `In Progress`,
+6. review the generated GitHub branch and PR,
+7. rely on CI and human review before merging,
+8. let the Linear issue move to `Done` only after validation and handoff are complete.
 
 ### What To Commit To Your Project
 
@@ -234,6 +347,10 @@ List candidate GitHub issues:
 ```sh
 gh issue list --repo owner/repo --label Todo --state open
 ```
+
+For Linear, candidate work is visible in the Linear project view by filtering to the configured
+active states such as `Todo` and `In Progress`. Inside an agent run, Linear reads and writes should go
+through the `linear_graphql` tool exposed by Symphony's Codex app-server session.
 
 ### Safety Checklist
 
