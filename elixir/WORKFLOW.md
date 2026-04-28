@@ -94,6 +94,16 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - Operate autonomously end-to-end unless blocked by missing requirements, secrets, or permissions.
 - Use the blocked-access escape hatch only for true external blockers (missing required tools/auth) after exhausting documented fallbacks.
 
+## External progress SLA
+
+The issue must never look abandoned while work is active.
+
+- Create or refresh the `## Codex Workpad` comment within 5 minutes of starting the run, before long investigation or implementation work.
+- While the issue remains in an active state, update that same workpad at least every 20 minutes, even if the only update is current investigation, command, blocker, or next planned validation.
+- Before starting any command, build, test, browser run, or investigation expected to take more than 10 minutes, add a workpad note with the command/purpose and expected signal.
+- After a long-running step finishes or fails, update the workpad with the result, next action, and any changed risk or blocker.
+- If Linear writes fail, try one documented fallback; if that also fails, stop with the exact blocker instead of continuing silently.
+
 ## Related skills
 
 - `linear`: interact with Linear.
@@ -143,6 +153,7 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
     - If found, reuse that comment; do not create a new workpad comment.
     - If not found, create one workpad comment and use it for all updates.
     - Persist the workpad comment ID and only write progress updates to that ID.
+    - This must be completed within the 5-minute external progress SLA before long-running work.
 2.  If arriving from `Todo`, do not delay on additional status transitions: the issue should already be `In Progress` before this step begins.
 3.  Immediately reconcile the workpad before new edits:
     - Check off items that are already done.
@@ -205,6 +216,7 @@ Use this only when completion is blocked by missing required tools or missing au
     - Add newly discovered items in the appropriate section.
     - Keep parent/child structure intact as scope evolves.
     - Update the workpad immediately after each meaningful milestone (for example: reproduction complete, code change landed, validation run, review feedback addressed).
+    - During long investigation or validation, update the workpad at least every 20 minutes even if no checklist item is complete yet.
     - Never leave completed work unchecked in the plan.
     - For tickets that started as `Todo` with an attached PR, run the full PR feedback sweep protocol immediately after kickoff and before new feature work.
 5.  Run validation/tests required for the scope.
@@ -320,6 +332,7 @@ Use this exact structure for the persistent workpad comment and keep it updated 
 ### Notes
 
 - <short progress note with timestamp>
+- <heartbeat note every 20 minutes while active, including current action, command/signal, next step, or blocker>
 
 ### Confusions
 

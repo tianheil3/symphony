@@ -60,6 +60,9 @@ defmodule SymphonyElixir.InstallerApplyTest do
 
     assert workflow_artifact.content =~ "Forge provider: GitHub"
     assert workflow_artifact.content =~ "Validation command before handoff: mix test"
+    assert workflow_artifact.content =~ "Progress SLA"
+    assert workflow_artifact.content =~ "Create or refresh `## Codex Workpad` within 5 minutes"
+    assert workflow_artifact.content =~ "update the same workpad at least every 20 minutes"
   end
 
   test "planned_artifacts/1 renders starter profile with conservative real-project defaults" do

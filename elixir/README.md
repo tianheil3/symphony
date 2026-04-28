@@ -86,6 +86,10 @@ GitHub Issues or Linear. It formats requests with problem context, acceptance cr
 and the correct pickup state, then can check status, add context, or move the issue through the
 configured workflow.
 
+Generated workflows require visible progress: workers create or refresh a single `## Codex Workpad`
+shortly after pickup and update that same comment during long-running investigation, validation, or
+blocked work.
+
 The same skill bundle includes `scripts/ensure_symphony_installer.sh`, which reuses an existing
 `symphony` binary when available or downloads a matching release asset from GitHub Releases when
 it is missing.

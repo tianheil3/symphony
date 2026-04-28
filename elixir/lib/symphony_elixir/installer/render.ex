@@ -145,6 +145,13 @@ defmodule SymphonyElixir.Installer.Render do
       "9. Create or update a PR/MR for code changes, attach or link it to the tracker issue when available, and wait for CI/check evidence before marking work complete.",
       "10. Do not auto-merge by default.",
       "",
+      "Progress SLA:",
+      "- Create or refresh `## Codex Workpad` within 5 minutes of starting the run, before long investigation or implementation work.",
+      "- While the issue remains active, update the same workpad at least every 20 minutes, even if the only update is current investigation, command, blocker, or next planned validation.",
+      "- Before starting any command, build, test, browser run, or investigation expected to take more than 10 minutes, add a workpad note with the command/purpose and expected signal.",
+      "- After a long-running step finishes or fails, update the workpad with the result, next action, and any changed risk or blocker.",
+      "- If tracker writes fail, stop after recording the exact blocker in the final response; do not continue silently for more than one attempted fallback.",
+      "",
       "Related skills:"
     ]
     |> Kernel.++(gstack_skill_lines(plan))

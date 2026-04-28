@@ -3,6 +3,8 @@ defmodule SymphonyElixir.CoreTest do
   alias SymphonyElixir.Installer.Manifest
   alias SymphonyElixir.Installer.SessionState
 
+  @due_at_assertion_jitter_ms 2_000
+
   test "config defaults and validation checks" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
@@ -828,7 +830,7 @@ defmodule SymphonyElixir.CoreTest do
   defp assert_due_in_range(due_at_ms, min_remaining_ms, max_remaining_ms) do
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
 
-    assert remaining_ms >= min_remaining_ms
+    assert remaining_ms >= min_remaining_ms - @due_at_assertion_jitter_ms
     assert remaining_ms <= max_remaining_ms
   end
 

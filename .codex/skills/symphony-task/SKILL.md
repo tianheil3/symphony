@@ -61,6 +61,11 @@ Convert natural language into this issue structure before creating or updating a
 
 - [ ] <Command, manual check, CI check, or targeted proof>
 
+## Progress Expectations
+
+- [ ] Create or update `## Codex Workpad` soon after pickup.
+- [ ] Add heartbeat updates during long investigation, validation, or blocked work.
+
 ## Out of Scope
 
 - <Anything the agent should not expand into>
