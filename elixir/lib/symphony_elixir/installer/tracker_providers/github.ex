@@ -72,6 +72,7 @@ defmodule SymphonyElixir.Installer.TrackerProviders.GitHub do
     - Read issue metadata with `gh issue view`.
     - Add issue comments with `gh issue comment`.
     - Update issue labels or state with `gh api repos/<owner>/<repo>/issues/<number>`.
+    - After PR handoff, validation, and check evidence are complete, move the issue to `Done`; the workflow-state label update removes `Todo` / `In Progress`.
     - Read or update pull requests with `gh pr view` and `gh pr edit`.
     """
   end

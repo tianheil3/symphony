@@ -43,6 +43,29 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
     Snapshot.assert_dashboard_snapshot!("idle_with_dashboard_url", render_snapshot(snapshot_data, 0.0))
   end
 
+  test "dashboard project link follows github tracker configuration" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_endpoint: "https://api.github.com",
+      tracker_api_token: "token",
+      tracker_project_slug: "owner/repo"
+    )
+
+    snapshot_data =
+      {:ok,
+       %{
+         running: [],
+         retrying: [],
+         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+         rate_limits: nil
+       }}
+
+    rendered = render_snapshot(snapshot_data, 0.0)
+
+    assert rendered =~ "https://github.com/owner/repo/issues"
+    refute rendered =~ "https://linear.app/project/owner/repo/issues"
+  end
+
   test "snapshot fixture: super busy dashboard" do
     snapshot_data =
       {:ok,

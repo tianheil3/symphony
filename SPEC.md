@@ -708,8 +708,9 @@ Tick sequence:
 2. Run dispatch preflight validation.
 3. Fetch candidate issues from tracker using active states.
 4. Sort issues by dispatch priority.
-5. Dispatch eligible issues while slots remain.
-6. Notify observability/status consumers of state changes.
+5. Run tracker pickup writeback for each eligible issue that requires runtime-owned writeback.
+6. Dispatch only issues whose required pickup writeback succeeded.
+7. Notify observability/status consumers of state changes.
 
 If per-tick validation fails, dispatch is skipped for that tick, but reconciliation still happens
 first.
@@ -726,6 +727,10 @@ An issue is dispatch-eligible only if all are true:
 - Per-state concurrency slots are available.
 - Blocker rule for `Todo` state passes:
   - If the issue state is `Todo`, do not dispatch when any blocker is non-terminal.
+- Required tracker pickup writeback succeeds:
+  - GitHub `Todo` issues MUST be moved to the configured progress state, normally `In Progress`.
+  - GitHub issues MUST have a `## Codex Workpad` comment created or refreshed before agent code starts.
+  - If either write fails, the issue is skipped for that dispatch attempt and no coding-agent process starts.
 
 Sorting order (stable intent):
 
@@ -1199,11 +1204,15 @@ Orchestrator behavior on tracker errors:
 
 ### 11.5 Tracker Writes (Important Boundary)
 
-Symphony does not require first-class tracker write APIs in the orchestrator.
+Symphony owns the minimum tracker writes required to make runtime state trustworthy before code runs.
 
-- Ticket mutations (state transitions, comments, PR metadata) are typically handled by the coding
-  agent using tools defined by the workflow prompt.
-- The service remains a scheduler/runner and tracker reader.
+- Pickup mutations that gate safe dispatch, such as GitHub `Todo` -> `In Progress` label movement
+  and `## Codex Workpad` creation, are orchestrator preflight writes.
+- If a required pickup mutation fails, the orchestrator MUST NOT start the coding agent for that
+  issue attempt.
+- Completion mutations, PR metadata, and workflow-specific handoff transitions are typically
+  handled by the coding agent using tools defined by the workflow prompt after validation and check
+  evidence.
 - Workflow-specific success often means "reached the next handoff state" (for example
   `Human Review`) rather than tracker terminal state `Done`.
 - If the `linear_graphql` client-side tool extension is implemented, it is still part of the agent

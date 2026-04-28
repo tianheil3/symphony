@@ -256,9 +256,9 @@ handoff 前运行 `npm run check`。
 | 1 | 创建或选择一个 GitHub issue。 | 创建或选择一个 Linear issue。 |
 | 2 | 添加 `Todo` label。 | 移到 `Todo` 或其他 active state。 |
 | 3 | 启动或保持 Symphony 运行。 | 启动或保持 Symphony 运行。 |
-| 4 | Symphony 把 issue 移到 `In Progress`。 | Symphony 把 issue 移到 `In Progress`。 |
+| 4 | Symphony 先把 issue 移到 `In Progress`，并创建/刷新 `## Codex Workpad`，成功后才允许 agent 开始改代码；任一写入失败就停止 dispatch。 | Symphony 把 issue 移到 `In Progress`。 |
 | 5 | 审查生成的分支和 PR。 | 审查生成的 GitHub 分支和 PR。 |
-| 6 | 验证和 handoff 完成后移到 `Done`。 | 验证和 handoff 完成后移到 `Done`。 |
+| 6 | 验证、PR handoff、checks 证据完成后移到 `Done`；GitHub label 更新会移除 `Todo`/`In Progress`。 | 验证和 handoff 完成后移到 `Done`。 |
 
 ## 应该提交什么
 

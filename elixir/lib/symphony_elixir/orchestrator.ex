@@ -336,7 +336,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @doc false
-  @spec sync_issue_writeback_for_dispatch_for_test(Issue.t()) :: Issue.t()
+  @spec sync_issue_writeback_for_dispatch_for_test(Issue.t()) :: {:ok, Issue.t()} | {:error, term()}
   def sync_issue_writeback_for_dispatch_for_test(%Issue{} = issue) do
     sync_issue_writeback_for_dispatch(issue)
   end
@@ -705,6 +705,17 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host) do
+    case sync_issue_writeback_for_dispatch(issue) do
+      {:ok, issue} ->
+        start_agent_task_on_worker_host(state, issue, attempt, recipient, worker_host)
+
+      {:error, reason} ->
+        Logger.error("Skipping dispatch; tracker pickup writeback failed for #{issue_context(issue)}: #{inspect(reason)}")
+        state
+    end
+  end
+
+  defp start_agent_task_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host) do
     case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
            AgentRunner.run(issue, recipient, attempt: attempt, worker_host: worker_host)
          end) do
@@ -712,7 +723,6 @@ defmodule SymphonyElixir.Orchestrator do
         ref = Process.monitor(pid)
 
         Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
-        issue = sync_issue_writeback_for_dispatch(issue)
 
         running =
           Map.put(state.running, issue.id, %{
@@ -759,11 +769,12 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp sync_issue_writeback_for_dispatch(%Issue{} = issue) do
     if github_tracker_dispatch_writeback_enabled?() do
-      {issue_for_dispatch, transition_note} = maybe_transition_issue_to_dispatch_state(issue)
-      maybe_create_dispatch_comment(issue_for_dispatch, transition_note)
-      issue_for_dispatch
+      with {:ok, issue_for_dispatch, transition_note} <- maybe_transition_issue_to_dispatch_state(issue),
+           :ok <- create_dispatch_comment(issue_for_dispatch, transition_note) do
+        {:ok, issue_for_dispatch}
+      end
     else
-      issue
+      {:ok, issue}
     end
   end
 
@@ -779,26 +790,22 @@ defmodule SymphonyElixir.Orchestrator do
     original_state = issue.state
 
     if normalize_issue_state(original_state) == "todo" do
-      transition_issue_to_dispatch_state(issue, original_state, dispatch_progress_state_name())
+      case dispatch_progress_state_name() do
+        nil -> {:error, {:dispatch_state_missing, issue.id, original_state}}
+        next_state -> transition_issue_to_dispatch_state(issue, original_state, next_state)
+      end
     else
-      {issue, {:unchanged, original_state}}
+      {:ok, issue, {:unchanged, original_state}}
     end
   end
-
-  defp transition_issue_to_dispatch_state(issue, original_state, nil), do: {issue, {:unchanged, original_state}}
 
   defp transition_issue_to_dispatch_state(issue, original_state, next_state) do
     case Tracker.update_issue_state(issue.id, next_state) do
       :ok ->
-        {%{issue | state: next_state}, {:transitioned, original_state, next_state}}
+        {:ok, %{issue | state: next_state}, {:transitioned, original_state, next_state}}
 
       {:error, reason} ->
-        Logger.warning(
-          "Failed to move issue to dispatch state for #{issue_context(issue)} " <>
-            "target_state=#{inspect(next_state)} reason=#{inspect(reason)}"
-        )
-
-        {issue, {:transition_failed, original_state, next_state, reason}}
+        {:error, {:dispatch_state_update_failed, issue.id, next_state, reason}}
     end
   end
 
@@ -816,7 +823,7 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp maybe_create_dispatch_comment(%Issue{id: issue_id} = issue, transition_note)
+  defp create_dispatch_comment(%Issue{id: issue_id}, transition_note)
        when is_binary(issue_id) do
     comment_body = dispatch_comment_body(transition_note)
 
@@ -825,29 +832,20 @@ defmodule SymphonyElixir.Orchestrator do
         :ok
 
       {:error, reason} ->
-        Logger.warning("Failed to create dispatch comment for #{issue_context(issue)}: #{inspect(reason)}")
-        :ok
+        {:error, {:dispatch_workpad_failed, issue_id, reason}}
     end
   end
 
-  defp maybe_create_dispatch_comment(_issue, _transition_note), do: :ok
+  defp create_dispatch_comment(%Issue{id: issue_id}, _transition_note) do
+    {:error, {:dispatch_workpad_failed, issue_id, :missing_issue_id}}
+  end
 
   defp dispatch_comment_body({:transitioned, from_state, to_state}) do
     """
     ## Codex Workpad
 
     Symphony claimed this issue and moved it from `#{from_state}` to `#{to_state}`.
-    A Codex agent run is now active.
-    """
-    |> String.trim()
-  end
-
-  defp dispatch_comment_body({:transition_failed, from_state, to_state, _reason}) do
-    """
-    ## Codex Workpad
-
-    Symphony claimed this issue, but automatic state transition from `#{from_state}` to `#{to_state}` failed.
-    A Codex agent run is now active and will continue with the current tracker label.
+    A Codex agent run is starting.
     """
     |> String.trim()
   end
@@ -857,7 +855,7 @@ defmodule SymphonyElixir.Orchestrator do
     ## Codex Workpad
 
     Symphony claimed this issue in state `#{state_name}`.
-    A Codex agent run is now active.
+    A Codex agent run is starting.
     """
     |> String.trim()
   end

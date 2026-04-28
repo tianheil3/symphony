@@ -260,9 +260,9 @@ but humans, CI, and branch protection decide whether code lands on the protected
 | 1 | Create or choose a GitHub issue. | Create or choose a Linear issue. |
 | 2 | Add `Todo`. | Move it to `Todo` or another active state. |
 | 3 | Start or keep Symphony running. | Start or keep Symphony running. |
-| 4 | Symphony moves the issue to `In Progress`. | Symphony moves the issue to `In Progress`. |
+| 4 | Symphony moves the issue to `In Progress` and creates/refreshes `## Codex Workpad` before any agent code starts. If either write fails, dispatch stops. | Symphony moves the issue to `In Progress`. |
 | 5 | Review the generated branch and PR. | Review the generated GitHub branch and PR. |
-| 6 | Move to `Done` after validation and handoff. | Move to `Done` after validation and handoff. |
+| 6 | Move to `Done` after validation, PR handoff, and check evidence; the GitHub label update removes `Todo`/`In Progress`. | Move to `Done` after validation and handoff. |
 
 ## What To Commit
 

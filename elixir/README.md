@@ -318,9 +318,12 @@ runs `symphony install --manifest ...`, then launches Symphony on a selected fre
 verifies API health while the spawned process remains alive before declaring success. For GitHub
 tracker setups, it must verify or create the workflow-state labels required by the selected profile
 and tell the operator that new GitHub issues must carry an active-state label such as `Todo` before
-Symphony will pick them up. The generated `WORKFLOW.md` should also make GitHub comment/state
-handling explicit and forbid Linear-only closeout tools in GitHub mode. If setup cannot finish, it
-reports a precise blocker to fix.
+Symphony will pick them up. Runtime pickup is gated: Symphony moves GitHub `Todo` issues to
+`In Progress` and creates or refreshes `## Codex Workpad` before starting agent code; if either
+write fails, dispatch stops for that attempt. The generated `WORKFLOW.md` should also make GitHub
+comment/state handling explicit, include `turn_sandbox_policy.networkAccess: true`, and forbid
+Linear-only closeout tools in GitHub mode. If setup cannot finish, it reports a precise blocker to
+fix.
 
 Use the `symphony-task` skill when you want an agent to turn a natural-language request into a
 GitHub or Linear issue for Symphony, check whether Symphony picked it up, append new context, or move
