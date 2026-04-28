@@ -81,6 +81,11 @@ The concierge skill supports three workflow profiles:
 - `symphony-dev`: only for this repository or repositories that intentionally adopt Symphony's
   heavier internal workflow.
 
+After setup, use the `symphony-task` skill to submit natural-language work to Symphony through
+GitHub Issues or Linear. It formats requests with problem context, acceptance criteria, validation,
+and the correct pickup state, then can check status, add context, or move the issue through the
+configured workflow.
+
 The same skill bundle includes `scripts/ensure_symphony_installer.sh`, which reuses an existing
 `symphony` binary when available or downloads a matching release asset from GitHub Releases when
 it is missing.
@@ -304,6 +309,10 @@ and tell the operator that new GitHub issues must carry an active-state label su
 Symphony will pick them up. The generated `WORKFLOW.md` should also make GitHub comment/state
 handling explicit and forbid Linear-only closeout tools in GitHub mode. If setup cannot finish, it
 reports a precise blocker to fix.
+
+Use the `symphony-task` skill when you want an agent to turn a natural-language request into a
+GitHub or Linear issue for Symphony, check whether Symphony picked it up, append new context, or move
+the issue to another configured workflow state.
 
 ## License
 
