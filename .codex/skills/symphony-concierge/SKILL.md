@@ -119,6 +119,7 @@ Then continue with no additional hidden scan loops.
    - workspace root and bootstrap hook
    - conservative agent limits unless overridden
    - the Codex app-server command
+   - `turn_sandbox_policy.networkAccess: true` so tracker CLIs/APIs can update labels, comments, states, and PR/MR handoff
    - a prompt body with status routing, workpad/comment rules, validation, PR/MR handoff, and provider-specific tool restrictions
 4. The generated prompt body must preserve these behavioral requirements:
    - Work only inside the Symphony-created issue workspace.

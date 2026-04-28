@@ -90,6 +90,11 @@ Generated workflows require visible progress: workers create or refresh a single
 shortly after pickup and update that same comment during long-running investigation, validation, or
 blocked work.
 
+Generated workflows also enable Codex turn-level network access so worker runs can call tracker
+CLIs/APIs such as `gh`, `glab`, or Linear tooling for labels, comments, status changes, and PR/MR
+handoff. Repository writes remain constrained to the issue workspace unless you explicitly choose a
+broader sandbox policy.
+
 The same skill bundle includes `scripts/ensure_symphony_installer.sh`, which reuses an existing
 `symphony` binary when available or downloads a matching release asset from GitHub Releases when
 it is missing.
@@ -173,6 +178,9 @@ agent:
   max_turns: 10
 codex:
   command: codex app-server
+  turn_sandbox_policy:
+    type: workspaceWrite
+    networkAccess: true
 ---
 
 You are working on a GitHub issue {{ issue.identifier }}.

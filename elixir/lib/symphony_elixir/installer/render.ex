@@ -81,6 +81,7 @@ defmodule SymphonyElixir.Installer.Render do
         "  thread_sandbox: \"workspace-write\"",
         "  turn_sandbox_policy:",
         "    type: \"workspaceWrite\"",
+        "    networkAccess: true",
         "---",
         workflow_prompt(plan)
       ]
