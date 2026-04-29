@@ -195,10 +195,10 @@ Notes:
 - For `tracker.kind: github`, set `tracker.project_slug` to `owner/repo`.
 - The GitHub tracker implementation uses GitHub Issues plus workflow labels for Symphony states; GitHub Projects v2 is not currently used as the tracker surface.
 - Safer Codex defaults are used when policy fields are omitted:
-  - `codex.approval_policy` defaults to `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}`
+  - `codex.approval_policy` defaults to `never`
   - `codex.thread_sandbox` defaults to `workspace-write`
   - `codex.turn_sandbox_policy` defaults to a `workspaceWrite` policy rooted at the current issue workspace
-- Supported `codex.approval_policy` values depend on the targeted Codex app-server version. In the current local Codex schema, string values include `untrusted`, `on-failure`, `on-request`, and `never`, and object-form `reject` is also supported.
+- Supported `codex.approval_policy` values depend on the targeted Codex app-server version. In the current local Codex schema, string values include `untrusted`, `on-failure`, `on-request`, `never`, and `granular`.
 - Supported `codex.thread_sandbox` values: `read-only`, `workspace-write`, `danger-full-access`.
 - When `codex.turn_sandbox_policy` is set explicitly, Symphony passes the map through to Codex
   unchanged. Compatibility then depends on the targeted Codex app-server version rather than local
@@ -212,7 +212,7 @@ Notes:
 - If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
   the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
 - `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
-- `tracker.api_key` also reads from `GITLAB_API_TOKEN` for `gitlab` and `GITHUB_TOKEN` for `github` when unset or expressed as the matching `$ENV_VAR`.
+- `tracker.api_key` also reads from `GITLAB_API_TOKEN` for `gitlab` and `GITHUB_TOKEN` (or `GH_TOKEN`) for `github` when unset or expressed as the matching `$ENV_VAR`.
 - For path values, `~` is expanded to the home directory.
 - For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,
   while `codex.command` stays a shell command string and any `$VAR` expansion there happens in the
