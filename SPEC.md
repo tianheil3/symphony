@@ -410,7 +410,7 @@ Fields:
 Fields:
 
 - `max_concurrent_agents` (integer)
-  - Default: `10`
+  - Default: `5`
   - Changes SHOULD be re-applied at runtime and affect subsequent dispatch decisions.
 - `max_turns` (positive integer)
   - Default: `20`
@@ -583,7 +583,7 @@ not require recognizing or validating extension fields unless that extension is 
 - `hooks.after_run`: shell script or null
 - `hooks.before_remove`: shell script or null
 - `hooks.timeout_ms`: integer, default `60000`
-- `agent.max_concurrent_agents`: integer, default `10`
+- `agent.max_concurrent_agents`: integer, default `5`
 - `agent.max_turns`: integer, default `20`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
 - `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`

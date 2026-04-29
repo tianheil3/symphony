@@ -60,6 +60,7 @@ defmodule SymphonyElixir.InstallerApplyTest do
 
     assert workflow_artifact.content =~ "Forge provider: GitHub"
     assert workflow_artifact.content =~ "Validation command before handoff: mix test"
+    assert workflow_artifact.content =~ "max_concurrent_agents: 5"
     assert workflow_artifact.content =~ "networkAccess: true"
     assert workflow_artifact.content =~ "Progress SLA"
     assert workflow_artifact.content =~ "Create or refresh `## Codex Workpad` within 5 minutes"

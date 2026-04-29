@@ -68,7 +68,7 @@ defmodule SymphonyElixir.Installer.WorkflowProfile do
   defp apply_profile_defaults(plan, "symphony-dev") do
     plan
     |> put_default(:terminal_states, @default_terminal_states)
-    |> put_default(:agent_max_concurrent_agents, 10)
+    |> put_default(:agent_max_concurrent_agents, 5)
     |> put_default(:agent_max_turns, 20)
     |> put_default(:human_review_state, @default_human_review_state)
     |> put_default(:rework_state, @default_rework_state)
@@ -77,7 +77,7 @@ defmodule SymphonyElixir.Installer.WorkflowProfile do
 
   defp apply_profile_defaults(plan, _profile) do
     plan
-    |> put_default(:agent_max_concurrent_agents, 10)
+    |> put_default(:agent_max_concurrent_agents, 5)
     |> put_default(:agent_max_turns, 20)
   end
 
