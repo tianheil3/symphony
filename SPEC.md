@@ -410,7 +410,7 @@ Fields:
 Fields:
 
 - `max_concurrent_agents` (integer)
-  - Default: `10`
+  - Default: `5`
   - Changes SHOULD be re-applied at runtime and affect subsequent dispatch decisions.
 - `max_turns` (positive integer)
   - Default: `20`
