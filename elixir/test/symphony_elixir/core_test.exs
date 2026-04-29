@@ -226,6 +226,53 @@ defmodule SymphonyElixir.CoreTest do
     assert :ok = Config.validate!()
   end
 
+  test "github api token falls back to GH_TOKEN when GITHUB_TOKEN is missing" do
+    previous_github_api_key = System.get_env("GITHUB_TOKEN")
+    previous_gh_token = System.get_env("GH_TOKEN")
+    env_api_key = "test-gh-token"
+
+    on_exit(fn ->
+      restore_env("GITHUB_TOKEN", previous_github_api_key)
+      restore_env("GH_TOKEN", previous_gh_token)
+    end)
+
+    System.delete_env("GITHUB_TOKEN")
+    System.put_env("GH_TOKEN", env_api_key)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: nil,
+      tracker_endpoint: nil,
+      tracker_project_slug: "owner/repo",
+      codex_command: "/bin/sh app-server"
+    )
+
+    assert Config.settings!().tracker.api_key == env_api_key
+  end
+
+  test "github api token prefers GITHUB_TOKEN over GH_TOKEN when both are set" do
+    previous_github_api_key = System.get_env("GITHUB_TOKEN")
+    previous_gh_token = System.get_env("GH_TOKEN")
+
+    on_exit(fn ->
+      restore_env("GITHUB_TOKEN", previous_github_api_key)
+      restore_env("GH_TOKEN", previous_gh_token)
+    end)
+
+    System.put_env("GITHUB_TOKEN", "preferred-github-token")
+    System.put_env("GH_TOKEN", "fallback-gh-token")
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: nil,
+      tracker_endpoint: nil,
+      tracker_project_slug: "owner/repo",
+      codex_command: "/bin/sh app-server"
+    )
+
+    assert Config.settings!().tracker.api_key == "preferred-github-token"
+  end
+
   test "workflow file path defaults to WORKFLOW.md in the current working directory when app env is unset" do
     original_workflow_path = Workflow.workflow_file_path()
 

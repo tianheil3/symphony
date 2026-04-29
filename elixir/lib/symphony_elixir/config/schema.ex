@@ -419,7 +419,7 @@ defmodule SymphonyElixir.Config.Schema do
   defp tracker_env_value(provider, callback)
        when is_atom(provider) and not is_nil(provider) and is_atom(callback) do
     case apply(provider, callback, []) do
-      env_name when is_binary(env_name) -> System.get_env(env_name)
+      env_name when is_binary(env_name) -> resolve_env_var(env_name)
       _ -> nil
     end
   end
