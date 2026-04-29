@@ -161,13 +161,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:command, :string, default: "codex app-server")
 
       field(:approval_policy, StringOrMap,
-        default: %{
-          "reject" => %{
-            "sandbox_approval" => true,
-            "rules" => true,
-            "mcp_elicitations" => true
-          }
-        }
+        default: "never"
       )
 
       field(:thread_sandbox, :string, default: "workspace-write")
@@ -484,7 +478,7 @@ defmodule SymphonyElixir.Config.Schema do
   defp resolve_env_value(value, fallback) when is_binary(value) do
     case env_reference_name(value) do
       {:ok, env_name} ->
-        case System.get_env(env_name) do
+        case resolve_env_var(env_name) do
           nil -> fallback
           "" -> nil
           env_value -> env_value
@@ -513,11 +507,17 @@ defmodule SymphonyElixir.Config.Schema do
   defp env_reference_name(_value), do: :error
 
   defp resolve_env_token(env_name) do
-    case System.get_env(env_name) do
+    case resolve_env_var(env_name) do
       nil -> :missing
       env_value -> env_value
     end
   end
+
+  defp resolve_env_var("GITHUB_TOKEN") do
+    System.get_env("GITHUB_TOKEN") || System.get_env("GH_TOKEN")
+  end
+
+  defp resolve_env_var(env_name), do: System.get_env(env_name)
 
   defp normalize_secret_value(value) when is_binary(value) do
     if value == "", do: nil, else: value
